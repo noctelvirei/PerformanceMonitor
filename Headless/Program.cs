@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();
 builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection("Monitor"));
 builder.Services.AddSingleton<HeadlessStore>();
+builder.Services.AddSingleton<MonitorSettingsService>();
 builder.Services.AddHostedService<SqlEstateCollectorService>();
 
 var app = builder.Build();
@@ -30,6 +31,27 @@ app.MapGet("/api/servers", async (HeadlessStore store, CancellationToken cancell
 
 app.MapGet("/api/alerts", async (HeadlessStore store, CancellationToken cancellationToken)
     => Results.Ok(await store.GetActiveAlertsAsync(cancellationToken)));
+
+app.MapGet("/api/settings", (MonitorSettingsService settings)
+    => Results.Ok(settings.GetSettings()));
+
+app.MapPut("/api/settings", async (
+    HeadlessSettingsDto request,
+    MonitorSettingsService settings,
+    CancellationToken cancellationToken) =>
+{
+    await settings.SaveSettingsAsync(request, cancellationToken);
+    return Results.Ok(settings.GetSettings());
+});
+
+app.MapPost("/api/settings/test-connection", async (
+    TestConnectionRequest request,
+    MonitorSettingsService settings,
+    CancellationToken cancellationToken) =>
+{
+    var result = await settings.TestConnectionAsync(request.Server, cancellationToken);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+});
 
 app.MapGet("/api/collection-log", async (HeadlessStore store, int? limit, CancellationToken cancellationToken)
     => Results.Ok(await store.GetCollectionLogAsync(limit ?? 200, cancellationToken)));

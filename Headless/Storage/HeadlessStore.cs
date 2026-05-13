@@ -6,24 +6,24 @@ namespace PerformanceMonitor.Headless.Storage;
 
 public sealed class HeadlessStore
 {
-    private readonly MonitorOptions _options;
+    private readonly IOptionsMonitor<MonitorOptions> _options;
     private readonly IHostEnvironment _environment;
     private readonly ILogger<HeadlessStore> _logger;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private static long s_idCounter = DateTime.UtcNow.Ticks;
 
     public HeadlessStore(
-        IOptions<MonitorOptions> options,
+        IOptionsMonitor<MonitorOptions> options,
         IHostEnvironment environment,
         ILogger<HeadlessStore> logger)
     {
-        _options = options.Value;
+        _options = options;
         _environment = environment;
         _logger = logger;
     }
 
-    public string DatabasePath => ResolvePath(_options.StoragePath);
-    public string ArchiveDirectory => ResolvePath(_options.ArchiveDirectory);
+    public string DatabasePath => ResolvePath(_options.CurrentValue.StoragePath);
+    public string ArchiveDirectory => ResolvePath(_options.CurrentValue.ArchiveDirectory);
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -42,7 +42,11 @@ public sealed class HeadlessStore
     }
 
     public DuckDBConnection CreateConnection()
-        => new($"Data Source={DatabasePath}");
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
+        Directory.CreateDirectory(ArchiveDirectory);
+        return new DuckDBConnection($"Data Source={DatabasePath}");
+    }
 
     public async Task UpsertConfiguredServersAsync(IEnumerable<MonitoredServerOptions> servers, CancellationToken cancellationToken)
     {
@@ -466,7 +470,7 @@ ORDER BY
             return ("yellow", "No successful collection yet");
         }
 
-        var staleAfter = TimeSpan.FromSeconds(Math.Max(180, _options.CollectionIntervalSeconds * 3));
+        var staleAfter = TimeSpan.FromSeconds(Math.Max(180, _options.CurrentValue.CollectionIntervalSeconds * 3));
         if (DateTime.UtcNow - lastSeenTime.Value > staleAfter)
         {
             return ("yellow", $"No server contact for {DateTime.UtcNow - lastSeenTime.Value:g}");
@@ -624,12 +628,12 @@ ORDER BY sample_time";
 
     public async Task ArchiveOldDataAsync(CancellationToken cancellationToken)
     {
-        if (_options.HotDataDays <= 0)
+        if (_options.CurrentValue.HotDataDays <= 0)
         {
             return;
         }
 
-        var cutoff = DateTime.UtcNow.AddDays(-_options.HotDataDays);
+        var cutoff = DateTime.UtcNow.AddDays(-_options.CurrentValue.HotDataDays);
         var tables = new[] { "wait_stats", "cpu_utilization_stats", "server_properties", "collection_log" };
 
         await _writeLock.WaitAsync(cancellationToken);

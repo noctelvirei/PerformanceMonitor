@@ -37,7 +37,11 @@ http://localhost:5155
 
 ## Configuration
 
-Create a local config from the example, then edit the local file:
+The browser Settings page is the preferred configuration path. Open the website and choose **Settings** to add servers, set the purpose group, choose Windows or SQL authentication, change collector schedules, and test connections.
+
+Settings are saved to the monitoring server's local `Headless\appsettings.json`, which is ignored by git. SQL passwords entered through Settings are protected with Windows DPAPI for the user or service account running the headless host.
+
+You can still seed a local config from the example if you are building or debugging the service:
 
 ```powershell
 Copy-Item D:\gitbhub\PerformanceMonitor\Headless\appsettings.example.json D:\gitbhub\PerformanceMonitor\Headless\appsettings.json
@@ -83,7 +87,11 @@ $env:PM_DEV_SQL_02 = "Server=DEV-SQL-02;Database=master;User ID=pm_reader;Passwo
 
 For dozens of servers, use stable `Id` values. Those ids become the partition key in DuckDB and API URLs. Set `Purpose` to values such as `Development`, `Staging`, or `Production` so the dashboard can group and filter the estate.
 
+For normal use, avoid hand-editing this file after first launch. Use the Settings page so server changes are written consistently and picked up on the next collection cycle.
+
 ## Run Locally
+
+This is only for development. A Windows installer/service package should be used for normal laptop or monitoring-server installs once packaging is added.
 
 Use the workspace-local SDK if the machine does not have a .NET SDK on `PATH`:
 
@@ -103,12 +111,17 @@ Open:
 http://localhost:5155
 ```
 
+Then open **Settings**, add your SQL Servers, test the connection, and save.
+
 ## API
 
 ```text
 GET /api/summary
 GET /api/servers
 GET /api/alerts
+GET /api/settings
+PUT /api/settings
+POST /api/settings/test-connection
 GET /api/storage
 GET /api/collection-log?limit=200
 GET /api/servers/{serverId}/waits?hours=1&limit=20

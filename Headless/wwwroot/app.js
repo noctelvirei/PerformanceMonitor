@@ -5,6 +5,7 @@ const state = {
   servers: [],
   logs: [],
   alerts: [],
+  settings: null,
   healthSnapshot: JSON.parse(localStorage.getItem("pm-headless-health") || "{}"),
   loadedOnce: false
 };
@@ -12,6 +13,7 @@ const state = {
 const els = {
   overviewView: document.getElementById("overview-view"),
   serverView: document.getElementById("server-view"),
+  settingsView: document.getElementById("settings-view"),
   generatedAt: document.getElementById("generated-at"),
   alertCount: document.getElementById("alert-count"),
   purposeFilter: document.getElementById("purpose-filter"),
@@ -23,6 +25,13 @@ const els = {
   serverStatsGrid: document.getElementById("server-stats-grid"),
   waitList: document.getElementById("wait-list"),
   cpuCanvas: document.getElementById("cpu-chart"),
+  settingsButton: document.getElementById("settings-button"),
+  settingsBack: document.getElementById("settings-back-button"),
+  settingsForm: document.getElementById("settings-form"),
+  settingsStatus: document.getElementById("settings-status"),
+  settingsServerList: document.getElementById("settings-server-list"),
+  settingsCollectorList: document.getElementById("settings-collector-list"),
+  addServer: document.getElementById("add-server-button"),
   refresh: document.getElementById("refresh-button"),
   notify: document.getElementById("notify-button"),
   back: document.getElementById("back-button"),
@@ -31,6 +40,13 @@ const els = {
 
 els.refresh.addEventListener("click", () => loadAll());
 els.back.addEventListener("click", () => navigateOverview());
+els.settingsButton.addEventListener("click", () => navigateSettings());
+els.settingsBack.addEventListener("click", () => navigateOverview());
+els.addServer.addEventListener("click", () => addSettingsServer());
+els.settingsForm.addEventListener("submit", event => {
+  event.preventDefault();
+  saveSettings();
+});
 els.purposeFilter.addEventListener("change", () => {
   state.purposeFilter = els.purposeFilter.value;
   renderServerCards();
@@ -349,6 +365,11 @@ function applyRoute() {
   const hash = window.location.hash || "#/overview";
   const serverMatch = hash.match(/^#\/servers\/([^/]+)(?:\/([^/]+))?/);
 
+  if (hash === "#/settings") {
+    showSettingsView();
+    return;
+  }
+
   if (serverMatch) {
     state.selectedServerId = decodeURIComponent(serverMatch[1]);
     state.activeTab = serverMatch[2] || "stats";
@@ -360,11 +381,16 @@ function applyRoute() {
   state.activeTab = "overview";
   els.overviewView.classList.remove("hidden");
   els.serverView.classList.add("hidden");
+  els.settingsView.classList.add("hidden");
   renderServerCards();
 }
 
 function navigateOverview() {
   window.location.hash = "#/overview";
+}
+
+function navigateSettings() {
+  window.location.hash = "#/settings";
 }
 
 function navigateServer(serverId, tab) {
@@ -374,6 +400,7 @@ function navigateServer(serverId, tab) {
 function showServerView() {
   els.overviewView.classList.add("hidden");
   els.serverView.classList.remove("hidden");
+  els.settingsView.classList.add("hidden");
 
   document.querySelectorAll(".server-menu button").forEach(button => {
     button.classList.toggle("active", button.dataset.tab === state.activeTab);
@@ -382,6 +409,193 @@ function showServerView() {
   document.querySelectorAll(".server-tab").forEach(tab => tab.classList.add("hidden"));
   const activePanel = document.getElementById(`tab-${state.activeTab}`);
   (activePanel || document.getElementById("tab-stats")).classList.remove("hidden");
+}
+
+async function showSettingsView() {
+  state.activeTab = "settings";
+  els.overviewView.classList.add("hidden");
+  els.serverView.classList.add("hidden");
+  els.settingsView.classList.remove("hidden");
+
+  if (!state.settings) {
+    await loadSettings();
+  }
+}
+
+async function loadSettings() {
+  state.settings = await fetchJson("/api/settings");
+  renderSettings();
+}
+
+function renderSettings() {
+  const settings = state.settings;
+  if (!settings) return;
+
+  setFormValue("urls", settings.urls);
+  setFormValue("storagePath", settings.storagePath);
+  setFormValue("archiveDirectory", settings.archiveDirectory);
+  setFormValue("collectionIntervalSeconds", settings.collectionIntervalSeconds);
+  setFormValue("maxConcurrentServers", settings.maxConcurrentServers);
+  setFormValue("commandTimeoutSeconds", settings.commandTimeoutSeconds);
+  setFormValue("archiveIntervalMinutes", settings.archiveIntervalMinutes);
+  setFormValue("hotDataDays", settings.hotDataDays);
+
+  els.settingsServerList.innerHTML = "";
+  for (const server of settings.servers || []) {
+    els.settingsServerList.appendChild(createServerSettingsCard(server));
+  }
+
+  els.settingsCollectorList.innerHTML = "";
+  for (const collector of settings.collectors || []) {
+    els.settingsCollectorList.appendChild(createCollectorSettingsRow(collector));
+  }
+}
+
+function createServerSettingsCard(server) {
+  const card = document.createElement("section");
+  card.className = "settings-card";
+  card.innerHTML = `
+    <div class="settings-card-header">
+      <strong>${escapeHtml(server.displayName || server.id || "New server")}</strong>
+      <div>
+        <button type="button" data-action="test">Test</button>
+        <button type="button" data-action="remove">Remove</button>
+      </div>
+    </div>
+    <div class="settings-grid">
+      <label>Enabled<select name="enabled"><option value="true">Yes</option><option value="false">No</option></select></label>
+      <label>Purpose<input name="purpose" type="text" value="${escapeAttr(server.purpose || "Development")}"></label>
+      <label>ID<input name="id" type="text" value="${escapeAttr(server.id || "")}"></label>
+      <label>Display Name<input name="displayName" type="text" value="${escapeAttr(server.displayName || "")}"></label>
+      <label>Auth<select name="connectionMode">
+        <option value="Windows">Windows</option>
+        <option value="Sql">SQL Login</option>
+        <option value="ConnectionString">Connection String</option>
+        <option value="EnvironmentVariable">Environment Variable</option>
+      </select></label>
+      <label>SQL Server<input name="dataSource" type="text" value="${escapeAttr(server.dataSource || "")}"></label>
+      <label>Database<input name="initialCatalog" type="text" value="${escapeAttr(server.initialCatalog || "master")}"></label>
+      <label>Encrypt<select name="encrypt"><option value="Optional">Optional</option><option value="Mandatory">Mandatory</option><option value="Strict">Strict</option></select></label>
+      <label>User<input name="userId" type="text" value="${escapeAttr(server.userId || "")}"></label>
+      <label>Password<input name="password" type="password" placeholder="${server.hasPassword ? "Saved" : ""}"></label>
+      <label>Trust Cert<select name="trustServerCertificate"><option value="true">Yes</option><option value="false">No</option></select></label>
+      <label>Env Var<input name="connectionStringEnvironmentVariable" type="text" value="${escapeAttr(server.connectionStringEnvironmentVariable || "")}"></label>
+      <label class="wide">Connection String<input name="connectionString" type="text" value="${escapeAttr(server.connectionString || "")}"></label>
+    </div>
+    <div class="settings-card-status"></div>
+  `;
+
+  card.querySelector('[name="enabled"]').value = String(server.enabled !== false);
+  card.querySelector('[name="connectionMode"]').value = server.connectionMode || "Windows";
+  card.querySelector('[name="encrypt"]').value = server.encrypt || "Optional";
+  card.querySelector('[name="trustServerCertificate"]').value = String(server.trustServerCertificate !== false);
+
+  card.querySelector('[data-action="remove"]').addEventListener("click", () => card.remove());
+  card.querySelector('[data-action="test"]').addEventListener("click", () => testSettingsServer(card));
+  return card;
+}
+
+function createCollectorSettingsRow(collector) {
+  const row = document.createElement("section");
+  row.className = "settings-card compact";
+  row.innerHTML = `
+    <div class="settings-grid compact">
+      <label>Name<input name="name" type="text" value="${escapeAttr(collector.name || "")}"></label>
+      <label>Enabled<select name="enabled"><option value="true">Yes</option><option value="false">No</option></select></label>
+      <label>Frequency Seconds<input name="frequencySeconds" type="number" min="1" value="${collector.frequencySeconds || 60}"></label>
+    </div>
+  `;
+  row.querySelector('[name="enabled"]').value = String(collector.enabled !== false);
+  return row;
+}
+
+function addSettingsServer() {
+  const next = {
+    id: "",
+    displayName: "",
+    purpose: "Development",
+    connectionMode: "Windows",
+    dataSource: "",
+    initialCatalog: "master",
+    encrypt: "Optional",
+    trustServerCertificate: true,
+    enabled: true
+  };
+  els.settingsServerList.appendChild(createServerSettingsCard(next));
+}
+
+async function saveSettings() {
+  const settings = collectSettings();
+  els.settingsStatus.textContent = "Saving...";
+  const response = await fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify(settings)
+  });
+
+  if (!response.ok) {
+    els.settingsStatus.textContent = await response.text();
+    return;
+  }
+
+  state.settings = await response.json();
+  els.settingsStatus.textContent = "Saved.";
+  renderSettings();
+  await loadAll();
+}
+
+async function testSettingsServer(card) {
+  const status = card.querySelector(".settings-card-status");
+  status.textContent = "Testing...";
+  const response = await fetch("/api/settings/test-connection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ server: collectServerCard(card) })
+  });
+  const result = await response.json().catch(() => ({ message: response.statusText }));
+  status.textContent = result.message || (response.ok ? "Connection OK." : "Connection failed.");
+  status.className = `settings-card-status ${response.ok ? "green" : "red"}`;
+}
+
+function collectSettings() {
+  return {
+    urls: getFormValue("urls"),
+    storagePath: getFormValue("storagePath"),
+    archiveDirectory: getFormValue("archiveDirectory"),
+    collectionIntervalSeconds: getNumberFormValue("collectionIntervalSeconds"),
+    maxConcurrentServers: getNumberFormValue("maxConcurrentServers"),
+    commandTimeoutSeconds: getNumberFormValue("commandTimeoutSeconds"),
+    archiveIntervalMinutes: getNumberFormValue("archiveIntervalMinutes"),
+    hotDataDays: getNumberFormValue("hotDataDays"),
+    servers: [...els.settingsServerList.querySelectorAll(".settings-card")].map(collectServerCard),
+    collectors: [...els.settingsCollectorList.querySelectorAll(".settings-card")].map(collectCollectorCard)
+  };
+}
+
+function collectServerCard(card) {
+  return {
+    id: getCardValue(card, "id"),
+    displayName: getCardValue(card, "displayName"),
+    purpose: getCardValue(card, "purpose"),
+    connectionMode: getCardValue(card, "connectionMode"),
+    dataSource: getCardValue(card, "dataSource"),
+    initialCatalog: getCardValue(card, "initialCatalog"),
+    userId: getCardValue(card, "userId"),
+    password: getCardValue(card, "password"),
+    encrypt: getCardValue(card, "encrypt"),
+    trustServerCertificate: getCardValue(card, "trustServerCertificate") === "true",
+    connectionString: getCardValue(card, "connectionString"),
+    connectionStringEnvironmentVariable: getCardValue(card, "connectionStringEnvironmentVariable"),
+    enabled: getCardValue(card, "enabled") === "true"
+  };
+}
+
+function collectCollectorCard(card) {
+  return {
+    name: getCardValue(card, "name"),
+    enabled: getCardValue(card, "enabled") === "true",
+    frequencySeconds: Number(getCardValue(card, "frequencySeconds")) || 60
+  };
 }
 
 async function loadSelectedServer() {
@@ -571,6 +785,25 @@ function formatMs(ms) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function setFormValue(name, value) {
+  const field = els.settingsForm.elements[name];
+  if (field) field.value = value ?? "";
+}
+
+function getFormValue(name) {
+  const field = els.settingsForm.elements[name];
+  return field ? field.value.trim() : "";
+}
+
+function getNumberFormValue(name) {
+  return Number(getFormValue(name)) || 0;
+}
+
+function getCardValue(card, name) {
+  const field = card.querySelector(`[name="${name}"]`);
+  return field ? field.value.trim() : "";
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -578,6 +811,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
 loadAll().catch(error => {

@@ -28,18 +28,18 @@ public sealed class SqlEstateCollectorService : BackgroundService
         "XE_DISPATCHER_WAIT", "XE_TIMER_EVENT"
     };
 
-    private readonly MonitorOptions _options;
+    private readonly IOptionsMonitor<MonitorOptions> _options;
     private readonly HeadlessStore _store;
     private readonly ILogger<SqlEstateCollectorService> _logger;
     private readonly Dictionary<(string ServerId, string CollectorName), DateTime> _lastRuns = new();
     private DateTime _lastArchiveTime = DateTime.UtcNow;
 
     public SqlEstateCollectorService(
-        IOptions<MonitorOptions> options,
+        IOptionsMonitor<MonitorOptions> options,
         HeadlessStore store,
         ILogger<SqlEstateCollectorService> logger)
     {
-        _options = options.Value;
+        _options = options;
         _store = store;
         _logger = logger;
     }
@@ -47,7 +47,7 @@ public sealed class SqlEstateCollectorService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await _store.InitializeAsync(stoppingToken);
-        await _store.UpsertConfiguredServersAsync(_options.Servers, stoppingToken);
+        await _store.UpsertConfiguredServersAsync(_options.CurrentValue.Servers, stoppingToken);
 
         _logger.LogInformation(
             "Headless monitor started. DuckDB={DatabasePath}; Parquet={ArchiveDirectory}",
@@ -56,16 +56,28 @@ public sealed class SqlEstateCollectorService : BackgroundService
 
         await RunCollectionCycleAsync(stoppingToken);
 
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(10, _options.CollectionIntervalSeconds)));
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
+            var interval = TimeSpan.FromSeconds(Math.Max(10, _options.CurrentValue.CollectionIntervalSeconds));
+            try
+            {
+                await Task.Delay(interval, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
             await RunCollectionCycleAsync(stoppingToken);
         }
     }
 
     private async Task RunCollectionCycleAsync(CancellationToken cancellationToken)
     {
-        var enabledServers = _options.Servers
+        var options = _options.CurrentValue;
+        await _store.UpsertConfiguredServersAsync(options.Servers, cancellationToken);
+
+        var enabledServers = options.Servers
             .Where(s => s.Enabled)
             .Where(s => !string.IsNullOrWhiteSpace(s.Id))
             .ToList();
@@ -76,7 +88,7 @@ public sealed class SqlEstateCollectorService : BackgroundService
             return;
         }
 
-        using var throttle = new SemaphoreSlim(Math.Max(1, _options.MaxConcurrentServers));
+        using var throttle = new SemaphoreSlim(Math.Max(1, options.MaxConcurrentServers));
         var tasks = enabledServers.Select(async server =>
         {
             await throttle.WaitAsync(cancellationToken);
@@ -110,7 +122,7 @@ public sealed class SqlEstateCollectorService : BackgroundService
 
             await _store.SetServerStatusAsync(server, "ONLINE", null, null, cancellationToken);
 
-            foreach (var collector in _options.GetEffectiveCollectors().Where(c => c.Enabled))
+            foreach (var collector in _options.CurrentValue.GetEffectiveCollectors().Where(c => c.Enabled))
             {
                 if (!IsDue(server.Id, collector))
                 {
@@ -231,12 +243,13 @@ public sealed class SqlEstateCollectorService : BackgroundService
 
     private async Task ArchiveIfDueAsync(CancellationToken cancellationToken)
     {
-        if (_options.ArchiveIntervalMinutes <= 0)
+        var options = _options.CurrentValue;
+        if (options.ArchiveIntervalMinutes <= 0)
         {
             return;
         }
 
-        if (DateTime.UtcNow - _lastArchiveTime < TimeSpan.FromMinutes(_options.ArchiveIntervalMinutes))
+        if (DateTime.UtcNow - _lastArchiveTime < TimeSpan.FromMinutes(options.ArchiveIntervalMinutes))
         {
             return;
         }
@@ -275,7 +288,7 @@ OPTION(RECOMPILE);
 """;
 
         await using var command = new SqlCommand(query, connection);
-        command.CommandTimeout = Math.Max(1, _options.CommandTimeoutSeconds);
+        command.CommandTimeout = Math.Max(1, _options.CurrentValue.CommandTimeoutSeconds);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
@@ -315,7 +328,7 @@ OPTION(RECOMPILE);
 
         var rows = new List<WaitStatSnapshot>();
         await using var command = new SqlCommand(query, connection);
-        command.CommandTimeout = Math.Max(1, _options.CommandTimeoutSeconds);
+        command.CommandTimeout = Math.Max(1, _options.CurrentValue.CommandTimeoutSeconds);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -375,7 +388,7 @@ OPTION(RECOMPILE);
 
         var rows = new List<CpuSample>();
         await using var command = new SqlCommand(query, connection);
-        command.CommandTimeout = Math.Max(1, _options.CommandTimeoutSeconds);
+        command.CommandTimeout = Math.Max(1, _options.CurrentValue.CommandTimeoutSeconds);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {

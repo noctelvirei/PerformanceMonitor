@@ -66,7 +66,8 @@ td,
 }
 
 button,
-select {
+select,
+input {
   border: 1px solid var(--border);
   background: var(--panel-3);
   color: var(--text);
@@ -84,6 +85,11 @@ select {
   padding: 0 30px 0 10px;
 }
 
+input {
+  width: 100%;
+  cursor: text;
+}
+
 .header-actions {
   display: flex;
   gap: 8px;
@@ -91,7 +97,8 @@ select {
 }
 
 button:hover,
-select:hover {
+select:hover,
+input:hover {
   border-color: #465364;
   background: #242b35;
 }
@@ -516,6 +523,11 @@ tbody tr.selected {
   gap: 14px;
 }
 
+.settings-view {
+  display: grid;
+  gap: 14px;
+}
+
 .server-view-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -699,6 +711,92 @@ canvas {
   background: #31171a;
 }
 
+.settings-form {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.settings-grid.compact {
+  grid-template-columns: minmax(200px, 1fr) 140px 180px;
+  padding: 0;
+}
+
+.settings-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 0;
+}
+
+.settings-grid .wide {
+  grid-column: span 2;
+}
+
+.settings-list {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.settings-list.compact {
+  gap: 8px;
+}
+
+.settings-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.settings-card.compact {
+  padding: 12px;
+}
+
+.settings-card-header {
+  min-height: 44px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-card-header div {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-card-status {
+  min-height: 34px;
+  padding: 0 14px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-card-status.green {
+  color: var(--online);
+}
+
+.settings-card-status.red {
+  color: var(--warning);
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     width: min(100vw - 24px, 760px);
@@ -718,8 +816,14 @@ canvas {
 
   .detail-grid,
   .overview-layout,
-  .stats-grid {
+  .stats-grid,
+  .settings-grid,
+  .settings-grid.compact {
     grid-template-columns: 1fr;
+  }
+
+  .settings-grid .wide {
+    grid-column: span 1;
   }
 
   .alerts-panel {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Dashboard</title>
-  <link rel="stylesheet" href="/styles.css?v=overview-4">
+  <link rel="stylesheet" href="/styles.css?v=settings-1">
 </head>
 <body>
   <div class="app-shell">
@@ -14,6 +14,7 @@
         <h1>Dashboard</h1>
       </div>
       <div class="header-actions">
+        <button id="settings-button" type="button">Settings</button>
         <button id="notify-button" type="button">Enable Notifications</button>
         <button id="refresh-button" type="button">Refresh</button>
       </div>
@@ -109,10 +110,59 @@
           </article>
         </section>
       </section>
+
+      <section id="settings-view" class="settings-view hidden">
+        <div class="server-view-header">
+          <button id="settings-back-button" type="button">Dashboard</button>
+          <div>
+            <h2>Settings</h2>
+            <span id="settings-status">Saved locally on this monitoring server.</span>
+          </div>
+        </div>
+
+        <form id="settings-form" class="settings-form">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>General</h2>
+              <span>Changes apply to the next collection cycle</span>
+            </div>
+            <div class="settings-grid">
+              <label>Website URL<input name="urls" type="text"></label>
+              <label>Collection Seconds<input name="collectionIntervalSeconds" type="number" min="10"></label>
+              <label>Max Concurrent Servers<input name="maxConcurrentServers" type="number" min="1"></label>
+              <label>Command Timeout Seconds<input name="commandTimeoutSeconds" type="number" min="1"></label>
+              <label>Hot Data Days<input name="hotDataDays" type="number" min="0"></label>
+              <label>Archive Minutes<input name="archiveIntervalMinutes" type="number" min="0"></label>
+              <label class="wide">DuckDB Path<input name="storagePath" type="text"></label>
+              <label class="wide">Parquet Folder<input name="archiveDirectory" type="text"></label>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Servers</h2>
+              <button id="add-server-button" type="button">Add Server</button>
+            </div>
+            <div id="settings-server-list" class="settings-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Collectors</h2>
+              <span>Enable, disable, or change frequency</span>
+            </div>
+            <div id="settings-collector-list" class="settings-list compact"></div>
+          </article>
+
+          <div class="settings-actions">
+            <button type="submit">Save Settings</button>
+          </div>
+        </form>
+      </section>
     </main>
   </div>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script src="/app.js?v=overview-4"></script>
+  <script src="/app.js?v=settings-1"></script>
 </body>
 </html>
