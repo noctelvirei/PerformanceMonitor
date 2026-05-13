@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="/styles.css?v=overview-4">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>Dashboard</h1>
+      </div>
+      <div class="header-actions">
+        <button id="notify-button" type="button">Enable Notifications</button>
+        <button id="refresh-button" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="overview-view" class="overview-layout">
+        <div class="overview-main">
+          <section class="panel overview-panel">
+            <div class="panel-header">
+              <h2>Dashboard</h2>
+              <div class="panel-actions">
+                <select id="purpose-filter" aria-label="Purpose"></select>
+                <span id="generated-at"></span>
+              </div>
+            </div>
+            <div id="server-card-grid" class="server-card-grid"></div>
+          </section>
+        </div>
+
+        <aside class="panel alerts-panel" aria-label="Alerts">
+          <div class="panel-header">
+            <h2>Alerts</h2>
+            <span id="alert-count">0 active</span>
+          </div>
+          <div id="alert-list" class="alert-list"></div>
+        </aside>
+      </section>
+
+      <section id="server-view" class="server-view hidden">
+        <div class="server-view-header">
+          <button id="back-button" type="button">Dashboard</button>
+          <div>
+            <h2 id="selected-server-title">Server Detail</h2>
+            <span id="selected-server-subtitle"></span>
+          </div>
+        </div>
+
+        <nav class="server-menu" aria-label="Server menu">
+          <button type="button" data-tab="stats">Stats</button>
+          <button type="button" data-tab="cpu">CPU</button>
+          <button type="button" data-tab="queries">Queries</button>
+          <button type="button" data-tab="logs">Logs</button>
+        </nav>
+
+        <section id="tab-stats" class="server-tab">
+          <div class="stats-grid" id="server-stats-grid"></div>
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Top Waits</h2>
+              <span>Last hour</span>
+            </div>
+            <div class="wait-list" id="wait-list"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Queries</h2>
+              <span>Not available</span>
+            </div>
+            <div class="empty-state">Not available yet.</div>
+          </article>
+        </section>
+
+        <section id="tab-cpu" class="server-tab hidden">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>CPU</h2>
+              <span>Last hour</span>
+            </div>
+            <div class="chart-card">
+              <canvas id="cpu-chart" width="760" height="220"></canvas>
+            </div>
+          </article>
+        </section>
+
+        <section id="tab-queries" class="server-tab hidden">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Queries</h2>
+              <span>Not available</span>
+            </div>
+            <div class="empty-state">Not available yet.</div>
+          </article>
+        </section>
+
+        <section id="tab-logs" class="server-tab hidden">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Collector Log</h2>
+              <span>Latest 50</span>
+            </div>
+            <div id="collector-log" class="log-list"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="/app.js?v=overview-4"></script>
+</body>
+</html>
