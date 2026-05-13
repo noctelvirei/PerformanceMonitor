@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 using PerformanceMonitor.Headless.Models;
@@ -42,7 +43,7 @@ public sealed class SqlServerHeadlessStore : IHeadlessStore
         }
     }
 
-    public async Task UpsertConfiguredServersAsync(IEnumerable<MonitoredServerOptions> servers, CancellationToken cancellationToken)
+    public async Task UpsertConfiguredServersAsync(IEnumerable<CollectionServerIdentity> servers, CancellationToken cancellationToken)
     {
         await _writeLock.WaitAsync(cancellationToken);
         try
@@ -78,8 +79,49 @@ END
         }
     }
 
+    public async Task RecordSnapshotAsync(CollectionSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var storageWatch = Stopwatch.StartNew();
+        await UpsertConfiguredServersAsync([snapshot.Server], cancellationToken);
+        await SetServerStatusAsync(snapshot.Server, snapshot.ServerStatus, snapshot.ServerError, snapshot.ServerProperties, cancellationToken);
+
+        if (snapshot.ServerProperties is not null)
+        {
+            await InsertServerPropertiesAsync(snapshot.Server, snapshot.CollectionTime, snapshot.ServerProperties, cancellationToken);
+        }
+
+        await InsertWaitStatsAsync(snapshot.Server, snapshot.CollectionTime, snapshot.WaitStats, cancellationToken);
+        await InsertCpuSamplesAsync(snapshot.Server, snapshot.CollectionTime, snapshot.CpuSamples, cancellationToken);
+        storageWatch.Stop();
+
+        foreach (var log in snapshot.Logs)
+        {
+            var timedLog = WithStorageTiming(log, storageWatch.ElapsedMilliseconds);
+            await InsertCollectionLogAsync(
+                snapshot.Server,
+                timedLog.CollectorName,
+                timedLog.CollectionTime,
+                timedLog.DurationMs,
+                timedLog.Status,
+                timedLog.ErrorMessage,
+                timedLog.RowsCollected,
+                timedLog.SqlDurationMs,
+                timedLog.StorageDurationMs,
+                cancellationToken);
+        }
+    }
+
+    private static CollectionLogEntry WithStorageTiming(CollectionLogEntry log, long storageDurationMs)
+        => log.StorageDurationMs == 0
+            ? log with
+            {
+                DurationMs = checked(log.DurationMs + (int)Math.Min(int.MaxValue, storageDurationMs)),
+                StorageDurationMs = storageDurationMs
+            }
+            : log;
+
     public async Task SetServerStatusAsync(
-        MonitoredServerOptions server,
+        CollectionServerIdentity server,
         string status,
         string? errorMessage,
         ServerPropertiesSnapshot? properties,
@@ -126,7 +168,7 @@ END
     }
 
     public async Task InsertServerPropertiesAsync(
-        MonitoredServerOptions server,
+        CollectionServerIdentity server,
         DateTime collectionTime,
         ServerPropertiesSnapshot properties,
         CancellationToken cancellationToken)
@@ -165,7 +207,7 @@ VALUES
     }
 
     public async Task InsertWaitStatsAsync(
-        MonitoredServerOptions server,
+        CollectionServerIdentity server,
         DateTime collectionTime,
         IReadOnlyList<WaitStatSnapshot> rows,
         CancellationToken cancellationToken)
@@ -218,7 +260,7 @@ VALUES
     }
 
     public async Task InsertCpuSamplesAsync(
-        MonitoredServerOptions server,
+        CollectionServerIdentity server,
         DateTime collectionTime,
         IReadOnlyList<CpuSample> rows,
         CancellationToken cancellationToken)
@@ -258,7 +300,7 @@ VALUES
     }
 
     public async Task InsertCollectionLogAsync(
-        MonitoredServerOptions server,
+        CollectionServerIdentity server,
         string collectorName,
         DateTime collectionTime,
         int durationMs,
@@ -387,42 +429,29 @@ ORDER BY
     END,
     s.display_name;
 """, connection);
+        var now = DateTime.UtcNow;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var serverId = reader.GetString(0);
-            var displayName = reader.IsDBNull(1) ? serverId : reader.GetString(1);
-            var purpose = reader.IsDBNull(2) ? "Unassigned" : reader.GetString(2);
-            var isEnabled = reader.GetBoolean(3);
-            var lastSeenTime = reader.IsDBNull(4) ? (DateTime?)null : reader.GetDateTime(4);
-            var lastStatus = reader.IsDBNull(5) ? "UNKNOWN" : reader.GetString(5);
-            var lastError = reader.IsDBNull(6) ? null : reader.GetString(6);
-            var productVersion = reader.IsDBNull(7) ? null : reader.GetString(7);
-            var edition = reader.IsDBNull(8) ? null : reader.GetString(8);
-            var sqlMajorVersion = reader.IsDBNull(9) ? (int?)null : reader.GetInt32(9);
-            var activeAlertCount = reader.IsDBNull(10) ? 0 : Convert.ToInt32(reader.GetValue(10));
-            var recentAlert = reader.IsDBNull(11) ? null : reader.GetString(11);
-            var activeAlertSeverity = reader.IsDBNull(12) ? null : reader.GetString(12);
-            var latestSqlCpu = reader.IsDBNull(13) ? (int?)null : reader.GetInt32(13);
-            var topWaitType = reader.IsDBNull(14) ? null : reader.GetString(14);
-            var (healthState, healthReason) = ComputeHealth(isEnabled, lastSeenTime, lastStatus, lastError, activeAlertCount, recentAlert, activeAlertSeverity);
-
-            servers.Add(new ServerHealthDto(
+            servers.Add(EstateTelemetryQueryProjection.ToServerHealth(new EstateServerTelemetryRow(
                 serverId,
-                displayName,
-                purpose,
-                isEnabled,
-                lastSeenTime,
-                lastStatus,
-                recentAlert ?? lastError,
-                productVersion,
-                edition,
-                sqlMajorVersion,
-                healthState,
-                healthReason,
-                activeAlertCount,
-                latestSqlCpu,
-                topWaitType));
+                reader.IsDBNull(1) ? serverId : reader.GetString(1),
+                reader.IsDBNull(2) ? "Unassigned" : reader.GetString(2),
+                reader.GetBoolean(3),
+                reader.IsDBNull(4) ? null : reader.GetDateTime(4),
+                reader.IsDBNull(5) ? "UNKNOWN" : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                reader.IsDBNull(10) ? 0 : Convert.ToInt32(reader.GetValue(10)),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)),
+                _options.CurrentValue.CollectionIntervalSeconds,
+                now));
         }
 
         return servers;
@@ -430,21 +459,25 @@ ORDER BY
 
     public async Task<EstateSummaryDto> GetEstateSummaryAsync(CancellationToken cancellationToken)
     {
+        var generatedAt = DateTime.UtcNow;
         var servers = await GetServersAsync(cancellationToken);
-        var activeAlerts = await GetActiveAlertsAsync(cancellationToken);
-        return new EstateSummaryDto(
-            servers.Count,
-            servers.Count(s => string.Equals(s.HealthState, "green", StringComparison.OrdinalIgnoreCase)),
-            servers.Count(s => string.Equals(s.HealthState, "yellow", StringComparison.OrdinalIgnoreCase)),
-            servers.Count(s => string.Equals(s.HealthState, "red", StringComparison.OrdinalIgnoreCase)),
-            servers.Count(s => s.IsEnabled && string.Equals(s.LastStatus, "ERROR", StringComparison.OrdinalIgnoreCase)),
-            servers.Count(s => !s.IsEnabled),
-            DateTime.UtcNow,
+        return EstateTelemetryQueryProjection.ToSummary(
             servers,
-            activeAlerts);
+            await GetActiveCollectorAlertsAsync(cancellationToken),
+            generatedAt);
     }
 
-    public async Task<IReadOnlyList<ActiveAlertDto>> GetActiveAlertsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ActiveAlertDto>> GetEstateActiveAlertsAsync(CancellationToken cancellationToken)
+    {
+        var generatedAt = DateTime.UtcNow;
+        var servers = await GetServersAsync(cancellationToken);
+        return EstateTelemetryQueryProjection.ToEstateActiveAlerts(
+            servers,
+            await GetActiveCollectorAlertsAsync(cancellationToken),
+            generatedAt);
+    }
+
+    private async Task<IReadOnlyList<ActiveAlertDto>> GetActiveCollectorAlertsAsync(CancellationToken cancellationToken)
     {
         var alerts = new List<ActiveAlertDto>();
         await using var connection = CreateConnection();
@@ -626,6 +659,9 @@ ORDER BY sample_time;
         }
     }
 
+    public Task ApplyRetentionAsync(CancellationToken cancellationToken)
+        => ArchiveOldDataAsync(cancellationToken);
+
     private SqlConnection CreateConnection()
     {
         var connectionString = _options.CurrentValue.Repository.ResolveConnectionString();
@@ -637,46 +673,7 @@ ORDER BY sample_time;
         return new SqlConnection(connectionString);
     }
 
-    private (string HealthState, string HealthReason) ComputeHealth(
-        bool isEnabled,
-        DateTime? lastSeenTime,
-        string lastStatus,
-        string? lastError,
-        int activeAlertCount,
-        string? recentAlert,
-        string? activeAlertSeverity)
-    {
-        if (!isEnabled)
-        {
-            return ("disabled", "Monitoring disabled");
-        }
-
-        if (string.Equals(lastStatus, "ERROR", StringComparison.OrdinalIgnoreCase))
-        {
-            return ("red", lastError ?? "Connection failed");
-        }
-
-        if (activeAlertCount > 0)
-        {
-            var severity = string.Equals(activeAlertSeverity, "yellow", StringComparison.OrdinalIgnoreCase) ? "yellow" : "red";
-            return (severity, recentAlert ?? $"{activeAlertCount} active collector alert(s)");
-        }
-
-        if (!lastSeenTime.HasValue)
-        {
-            return ("yellow", "No successful collection yet");
-        }
-
-        var staleAfter = TimeSpan.FromSeconds(Math.Max(180, _options.CurrentValue.CollectionIntervalSeconds * 3));
-        if (DateTime.UtcNow - lastSeenTime.Value > staleAfter)
-        {
-            return ("yellow", $"No server contact for {DateTime.UtcNow - lastSeenTime.Value:g}");
-        }
-
-        return ("green", "All good");
-    }
-
-    private static void AddServerParameters(SqlCommand command, MonitoredServerOptions server)
+    private static void AddServerParameters(SqlCommand command, CollectionServerIdentity server)
     {
         command.Parameters.AddWithValue("@server_id", server.Id);
         command.Parameters.AddWithValue("@server_name", server.ServerNameForStorage);

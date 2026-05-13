@@ -10,7 +10,13 @@ builder.Services.Configure<MonitorOptions>(builder.Configuration.GetSection("Mon
 builder.Services.AddSingleton<HeadlessStore>();
 builder.Services.AddSingleton<SqlServerHeadlessStore>();
 builder.Services.AddSingleton<IHeadlessStore, RoutingHeadlessStore>();
+builder.Services.AddSingleton<IHeadlessRepository>(serviceProvider => serviceProvider.GetRequiredService<IHeadlessStore>());
+builder.Services.AddSingleton<IEstateTelemetryReader>(serviceProvider => serviceProvider.GetRequiredService<IHeadlessStore>());
 builder.Services.AddSingleton<MonitorSettingsService>();
+builder.Services.AddSingleton<MonitorSettingsConfigurationPersistence>();
+builder.Services.AddSingleton<CollectionSnapshotIntakeService>();
+builder.Services.AddSingleton<CollectionRunScheduler>();
+builder.Services.AddSingleton<SqlCollectorExecutor>();
 builder.Services.AddHostedService<SqlEstateCollectorService>();
 
 var app = builder.Build();
@@ -20,16 +26,16 @@ app.UseStaticFiles();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", generated_at = DateTime.UtcNow }));
 
-app.MapGet("/api/storage", (IHeadlessStore store) => Results.Ok(store.GetStorageInfo()));
+app.MapGet("/api/storage", (IHeadlessRepository repository) => Results.Ok(repository.GetStorageInfo()));
 
-app.MapGet("/api/summary", async (IHeadlessStore store, CancellationToken cancellationToken)
-    => Results.Ok(await store.GetEstateSummaryAsync(cancellationToken)));
+app.MapGet("/api/summary", async (IEstateTelemetryReader reader, CancellationToken cancellationToken)
+    => Results.Ok(await reader.GetEstateSummaryAsync(cancellationToken)));
 
-app.MapGet("/api/servers", async (IHeadlessStore store, CancellationToken cancellationToken)
-    => Results.Ok(await store.GetServersAsync(cancellationToken)));
+app.MapGet("/api/servers", async (IEstateTelemetryReader reader, CancellationToken cancellationToken)
+    => Results.Ok(await reader.GetServersAsync(cancellationToken)));
 
-app.MapGet("/api/alerts", async (IHeadlessStore store, CancellationToken cancellationToken)
-    => Results.Ok(await store.GetActiveAlertsAsync(cancellationToken)));
+app.MapGet("/api/alerts", async (IEstateTelemetryReader reader, CancellationToken cancellationToken)
+    => Results.Ok(await reader.GetEstateActiveAlertsAsync(cancellationToken)));
 
 app.MapGet("/api/settings", (MonitorSettingsService settings)
     => Results.Ok(settings.GetSettings()));
@@ -61,27 +67,27 @@ app.MapPost("/api/settings/test-repository", async (
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 });
 
-app.MapGet("/api/collection-log", async (IHeadlessStore store, int? limit, CancellationToken cancellationToken)
-    => Results.Ok(await store.GetCollectionLogAsync(limit ?? 200, cancellationToken)));
+app.MapGet("/api/collection-log", async (IEstateTelemetryReader reader, int? limit, CancellationToken cancellationToken)
+    => Results.Ok(await reader.GetCollectionLogAsync(limit ?? 200, cancellationToken)));
 
 app.MapGet("/api/servers/{serverId}/waits", async (
     string serverId,
-    IHeadlessStore store,
+    IEstateTelemetryReader reader,
     int? hours,
     int? limit,
     CancellationToken cancellationToken) =>
 {
-    var rows = await store.GetTopWaitsAsync(serverId, hours ?? 1, limit ?? 20, cancellationToken);
+    var rows = await reader.GetTopWaitsAsync(serverId, hours ?? 1, limit ?? 20, cancellationToken);
     return Results.Ok(rows);
 });
 
 app.MapGet("/api/servers/{serverId}/cpu", async (
     string serverId,
-    IHeadlessStore store,
+    IEstateTelemetryReader reader,
     int? hours,
     CancellationToken cancellationToken) =>
 {
-    var rows = await store.GetCpuSamplesAsync(serverId, hours ?? 1, cancellationToken);
+    var rows = await reader.GetCpuSamplesAsync(serverId, hours ?? 1, cancellationToken);
     return Results.Ok(rows);
 });
 
@@ -89,7 +95,7 @@ app.MapPost("/api/ingest/snapshot", async (
     IngestSnapshotDto request,
     HttpRequest httpRequest,
     IOptionsMonitor<MonitorOptions> options,
-    IHeadlessStore store,
+    CollectionSnapshotIntakeService intake,
     CancellationToken cancellationToken) =>
 {
     var configuredApiKey = options.CurrentValue.IngestApiKey;
@@ -109,50 +115,7 @@ app.MapPost("/api/ingest/snapshot", async (
         return Results.BadRequest("Server id is required.");
     }
 
-    var server = new MonitoredServerOptions
-    {
-        Id = request.Server.Id.Trim(),
-        DisplayName = string.IsNullOrWhiteSpace(request.Server.DisplayName) ? request.Server.Id.Trim() : request.Server.DisplayName.Trim(),
-        Purpose = string.IsNullOrWhiteSpace(request.Server.Purpose) ? "Unassigned" : request.Server.Purpose.Trim(),
-        Enabled = request.Server.Enabled
-    };
-
-    var collectionTime = request.CollectionTime ?? DateTime.UtcNow;
-    await store.InitializeAsync(cancellationToken);
-    await store.UpsertConfiguredServersAsync([server], cancellationToken);
-    await store.SetServerStatusAsync(server, request.Status, request.ErrorMessage, request.ServerProperties, cancellationToken);
-
-    var serverPropertiesRows = 0;
-    if (request.ServerProperties is not null)
-    {
-        await store.InsertServerPropertiesAsync(server, collectionTime, request.ServerProperties, cancellationToken);
-        serverPropertiesRows = 1;
-    }
-
-    await store.InsertWaitStatsAsync(server, collectionTime, request.WaitStats, cancellationToken);
-    await store.InsertCpuSamplesAsync(server, collectionTime, request.CpuSamples, cancellationToken);
-
-    foreach (var log in request.CollectionLog)
-    {
-        await store.InsertCollectionLogAsync(
-            server,
-            log.CollectorName,
-            log.CollectionTime,
-            log.DurationMs,
-            log.Status,
-            log.ErrorMessage,
-            log.RowsCollected,
-            0,
-            0,
-            cancellationToken);
-    }
-
-    return Results.Ok(new IngestResultDto(
-        true,
-        serverPropertiesRows,
-        request.WaitStats.Count,
-        request.CpuSamples.Count,
-        request.CollectionLog.Count));
+    return Results.Ok(await intake.AcceptRemoteAsync(request, cancellationToken));
 });
 
 app.MapFallbackToFile("index.html");

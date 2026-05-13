@@ -1,8 +1,5 @@
 namespace PerformanceMonitor.Headless.Models;
 
-using Microsoft.Data.SqlClient;
-using PerformanceMonitor.Headless.Security;
-
 public sealed class MonitorOptions
 {
     public string StorageProvider { get; set; } = "DuckDb";
@@ -25,16 +22,11 @@ public sealed class MonitorOptions
             return Collectors;
         }
 
-        return
-        [
-            new() { Name = "server_properties", FrequencySeconds = 3600 },
-            new() { Name = "wait_stats", FrequencySeconds = 60 },
-            new() { Name = "cpu_utilization", FrequencySeconds = 60 }
-        ];
+        return CollectorCatalog.DefaultSchedules;
     }
 }
 
-public sealed class RepositoryOptions
+public sealed class RepositoryOptions : ISqlConnectionProfile
 {
     public string ConnectionMode { get; set; } = "Windows";
     public string DataSource { get; set; } = "";
@@ -47,46 +39,5 @@ public sealed class RepositoryOptions
     public string? ConnectionStringEnvironmentVariable { get; set; }
 
     public string ResolveConnectionString()
-    {
-        if (!string.IsNullOrWhiteSpace(ConnectionStringEnvironmentVariable))
-        {
-            var fromEnvironment = Environment.GetEnvironmentVariable(ConnectionStringEnvironmentVariable);
-            if (!string.IsNullOrWhiteSpace(fromEnvironment))
-            {
-                return Environment.ExpandEnvironmentVariables(fromEnvironment);
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(ConnectionString))
-        {
-            return Environment.ExpandEnvironmentVariables(ConnectionString);
-        }
-
-        if (string.IsNullOrWhiteSpace(DataSource))
-        {
-            return "";
-        }
-
-        var builder = new SqlConnectionStringBuilder
-        {
-            DataSource = DataSource.Trim(),
-            InitialCatalog = string.IsNullOrWhiteSpace(InitialCatalog) ? "PerformanceMonitorRepository" : InitialCatalog.Trim(),
-            TrustServerCertificate = TrustServerCertificate
-        };
-
-        builder["Encrypt"] = string.IsNullOrWhiteSpace(Encrypt) ? "Optional" : Encrypt.Trim();
-
-        if (string.Equals(ConnectionMode, "Sql", StringComparison.OrdinalIgnoreCase))
-        {
-            builder.IntegratedSecurity = false;
-            builder.UserID = UserId ?? "";
-            builder.Password = LocalSecretProtector.Unprotect(ProtectedPassword);
-        }
-        else
-        {
-            builder.IntegratedSecurity = true;
-        }
-
-        return builder.ConnectionString;
-    }
+        => this.ResolveConnectionString("PerformanceMonitorRepository");
 }

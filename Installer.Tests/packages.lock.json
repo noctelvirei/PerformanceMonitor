@@ -523,7 +523,14 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Data.SqlClient": "[7.0.1, )",
-          "Microsoft.Data.SqlClient.Extensions.Azure": "[1.0.0, )"
+          "Microsoft.Data.SqlClient.Extensions.Azure": "[1.0.0, )",
+          "PerformanceMonitor.SqlConnectivity": "[1.0.0, )"
+        }
+      },
+      "performancemonitor.sqlconnectivity": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.SqlClient": "[7.0.1, )"
         }
       }
     }

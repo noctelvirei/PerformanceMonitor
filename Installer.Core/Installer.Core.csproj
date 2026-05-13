@@ -23,6 +23,10 @@
     <PackageReference Include="Microsoft.Data.SqlClient.Extensions.Azure" Version="1.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\SqlConnectivity\PerformanceMonitor.SqlConnectivity.csproj" />
+  </ItemGroup>
+
   <!-- Embed SQL scripts as assembly resources for Dashboard consumption -->
   <ItemGroup>
     <EmbeddedResource Include="..\install\**\*.sql" LinkBase="Resources\install" />

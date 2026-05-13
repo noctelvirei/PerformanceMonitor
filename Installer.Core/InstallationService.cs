@@ -11,6 +11,7 @@ using System.Diagnostics;
 using System.Text;
 using Installer.Core.Models;
 using Microsoft.Data.SqlClient;
+using PerformanceMonitor.SqlConnectivity;
 
 namespace Installer.Core;
 
@@ -62,39 +63,14 @@ public static class InstallationService
         string encryption = "Mandatory",
         bool trustCertificate = false,
         bool useEntraAuth = false)
-    {
-        var builder = new SqlConnectionStringBuilder
-        {
-            DataSource = server,
-            InitialCatalog = "master",
-            TrustServerCertificate = trustCertificate
-        };
-
-        builder.Encrypt = encryption switch
-        {
-            "Optional" => SqlConnectionEncryptOption.Optional,
-            "Mandatory" => SqlConnectionEncryptOption.Mandatory,
-            "Strict" => SqlConnectionEncryptOption.Strict,
-            _ => SqlConnectionEncryptOption.Mandatory
-        };
-
-        if (useEntraAuth)
-        {
-            builder.Authentication = SqlAuthenticationMethod.ActiveDirectoryInteractive;
-            builder.UserID = username;
-        }
-        else if (useWindowsAuth)
-        {
-            builder.IntegratedSecurity = true;
-        }
-        else
-        {
-            builder.UserID = username;
-            builder.Password = password;
-        }
-
-        return builder.ConnectionString;
-    }
+        => SqlConnectionBuilder.BuildConnectionString(
+            server,
+            useWindowsAuth,
+            username,
+            password,
+            encryption,
+            trustCertificate,
+            useEntraAuth);
 
     /// <summary>
     /// Test connection to SQL Server and get server information.
@@ -104,51 +80,30 @@ public static class InstallationService
         IProgress<InstallationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var info = new ServerInfo();
         LogDebug(progress, $"TestConnectionAsync: opening connection");
-        var sw = Stopwatch.StartNew();
-
-        try
+        var result = await SqlConnectionTester.TestConnectionAsync(connectionString, cancellationToken).ConfigureAwait(false);
+        var info = new ServerInfo
         {
-            using var connection = new SqlConnection(connectionString);
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            LogDebug(progress, $"TestConnectionAsync: connected in {sw.ElapsedMilliseconds}ms");
+            ServerName = result.ServerName,
+            SqlServerVersion = result.SqlServerVersion,
+            SqlServerEdition = result.SqlServerEdition,
+            IsConnected = result.IsConnected,
+            ErrorMessage = result.ErrorMessage,
+            EngineEdition = result.EngineEdition,
+            ProductMajorVersion = result.ProductMajorVersion
+        };
 
-            info.IsConnected = true;
-
-            using var command = new SqlCommand(@"
-                SELECT
-                    @@VERSION,
-                    SERVERPROPERTY('Edition'),
-                    @@SERVERNAME,
-                    CONVERT(int, SERVERPROPERTY('EngineEdition')),
-                    SERVERPROPERTY('ProductMajorVersion');", connection);
-            using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-
-            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                info.SqlServerVersion = reader.GetString(0);
-                info.SqlServerEdition = reader.GetString(1);
-                info.ServerName = reader.GetString(2);
-                info.EngineEdition = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
-                info.ProductMajorVersion = reader.IsDBNull(4) ? 0 : int.TryParse(reader.GetValue(4).ToString(), out var v) ? v : 0;
-            }
+        if (info.IsConnected)
+        {
+            LogDebug(progress, $"TestConnectionAsync: connected in {result.ElapsedMilliseconds}ms");
 
             LogDebug(progress, $"TestConnectionAsync: server={info.ServerName}, edition={info.SqlServerEdition}, " +
                 $"engineEdition={info.EngineEdition}, majorVersion={info.ProductMajorVersion}, " +
-                $"supported={info.IsSupportedVersion}, elapsed={sw.ElapsedMilliseconds}ms");
+                $"supported={info.IsSupportedVersion}, elapsed={result.ElapsedMilliseconds}ms");
         }
-        catch (Exception ex)
+        else
         {
-            info.IsConnected = false;
-            info.ErrorMessage = ex.Message;
-            if (ex.InnerException != null)
-            {
-                info.ErrorMessage += $"\n{ex.InnerException.Message}";
-            }
-            LogDebug(progress, $"TestConnectionAsync: FAILED after {sw.ElapsedMilliseconds}ms — " +
-                $"{ex.GetType().Name}: {ex.Message}" +
-                (ex.InnerException != null ? $" → {ex.InnerException.GetType().Name}: {ex.InnerException.Message}" : ""));
+            LogDebug(progress, $"TestConnectionAsync: FAILED after {result.ElapsedMilliseconds}ms — {info.ErrorMessage}");
         }
 
         return info;

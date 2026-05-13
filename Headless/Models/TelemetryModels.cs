@@ -14,6 +14,7 @@ public sealed record ServerHealthDto(
     string HealthState,
     string HealthReason,
     int ActiveAlertCount,
+    bool IsAttentionState,
     int? LatestSqlCpuUtilization,
     string? TopWaitType);
 

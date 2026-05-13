@@ -1,9 +1,6 @@
 namespace PerformanceMonitor.Headless.Models;
 
-using Microsoft.Data.SqlClient;
-using PerformanceMonitor.Headless.Security;
-
-public sealed class MonitoredServerOptions
+public sealed class MonitoredServerOptions : ISqlConnectionProfile
 {
     public string Id { get; set; } = "";
     public string DisplayName { get; set; } = "";
@@ -23,51 +20,5 @@ public sealed class MonitoredServerOptions
     public string PurposeForDisplay => string.IsNullOrWhiteSpace(Purpose) ? "Unassigned" : Purpose.Trim();
 
     public string ResolveConnectionString()
-    {
-        if (!string.IsNullOrWhiteSpace(ConnectionStringEnvironmentVariable))
-        {
-            var fromEnvironment = Environment.GetEnvironmentVariable(ConnectionStringEnvironmentVariable);
-            if (!string.IsNullOrWhiteSpace(fromEnvironment))
-            {
-                return Environment.ExpandEnvironmentVariables(fromEnvironment);
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(ConnectionString))
-        {
-            return Environment.ExpandEnvironmentVariables(ConnectionString);
-        }
-
-        return ResolveTypedConnectionString();
-    }
-
-    public string ResolveTypedConnectionString()
-    {
-        if (string.IsNullOrWhiteSpace(DataSource))
-        {
-            return "";
-        }
-
-        var builder = new SqlConnectionStringBuilder
-        {
-            DataSource = DataSource.Trim(),
-            InitialCatalog = string.IsNullOrWhiteSpace(InitialCatalog) ? "master" : InitialCatalog.Trim(),
-            TrustServerCertificate = TrustServerCertificate
-        };
-
-        builder["Encrypt"] = string.IsNullOrWhiteSpace(Encrypt) ? "Optional" : Encrypt.Trim();
-
-        if (string.Equals(ConnectionMode, "Sql", StringComparison.OrdinalIgnoreCase))
-        {
-            builder.IntegratedSecurity = false;
-            builder.UserID = UserId ?? "";
-            builder.Password = LocalSecretProtector.Unprotect(ProtectedPassword);
-        }
-        else
-        {
-            builder.IntegratedSecurity = true;
-        }
-
-        return builder.ConnectionString;
-    }
+        => this.ResolveConnectionString("master");
 }

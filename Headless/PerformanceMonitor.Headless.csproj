@@ -27,6 +27,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Collectors\PerformanceMonitor.Collectors.csproj" />
+    <ProjectReference Include="..\SqlConnectivity\PerformanceMonitor.SqlConnectivity.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
