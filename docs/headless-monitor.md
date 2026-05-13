@@ -1,6 +1,6 @@
 # Headless Estate Monitor
 
-The headless host is the central-server version of Performance Monitor. It runs on one monitoring server, connects remotely to SQL Server instances, stores hot data in DuckDB, archives older data to Parquet, and serves the website from the same process.
+The headless host is the central-server version of Performance Monitor. It runs on one monitoring server, connects remotely to SQL Server instances, stores results centrally, and serves the website from the same process.
 
 ## Current Thin Slice
 
@@ -10,9 +10,9 @@ The first implementation includes:
 - background collector loop
 - server inventory from configuration
 - Windows auth or SQL auth via normal SQL Server connection strings
-- DuckDB hot store on the monitoring server
-- Parquet archival for old hot data
+- DuckDB and Parquet storage on the monitoring server, or a central SQL Server repository
 - HTTP API
+- ingest API for child collectors to report to a parent dashboard
 - estate overview website with traffic-light server panels, collector log, CPU chart, and top waits
 - in-page alert toasts
 - optional browser notifications for red/yellow state changes
@@ -37,9 +37,11 @@ http://localhost:5155
 
 ## Configuration
 
-The browser Settings page is the preferred configuration path. Open the website and choose **Settings** to add servers, set the purpose group, choose Windows or SQL authentication, change collector schedules, and test connections.
+The browser Settings page is the preferred configuration path. Open the website and choose **Settings** to add servers, set the purpose group, choose Windows or SQL authentication, pick DuckDB or SQL Server repository storage, change collector schedules, and test connections.
 
 Settings are saved to the monitoring server's local `Headless\appsettings.json`, which is ignored by git. SQL passwords entered through Settings are protected with Windows DPAPI for the user or service account running the headless host.
+
+For a dozen or more dev boxes, a single central SQL repository is usually the cleanest shape. For larger estates, run one collector per estate boundary, such as Development, Staging, and Production, and have those collectors post to the parent dashboard API. The monitored SQL Servers still only need normal remote query permissions; they do not need local Performance Monitor databases or Agent jobs.
 
 You can still seed a local config from the example if you are building or debugging the service:
 
@@ -89,9 +91,30 @@ For dozens of servers, use stable `Id` values. Those ids become the partition ke
 
 For normal use, avoid hand-editing this file after first launch. Use the Settings page so server changes are written consistently and picked up on the next collection cycle.
 
+## Install Package
+
+For laptop or monitoring-server installs, build the headless package:
+
+```powershell
+D:\gitbhub\PerformanceMonitor\package-headless.cmd
+```
+
+The package is written to:
+
+```text
+D:\gitbhub\PerformanceMonitor\releases\PerformanceMonitorHeadless-<version>-win-x64.zip
+```
+
+Extract the ZIP to the folder where you want the monitor to live, then run one of the package launchers as an administrator:
+
+- `InstallHeadlessService.cmd` for SQL authentication or connection strings.
+- `InstallHeadlessService-WindowsAuth.cmd` when Windows authentication to SQL Servers should come from a domain/service account.
+
+The installer registers and starts the `PerformanceMonitorHeadless` Windows service, opens the website, and leaves server setup to the browser Settings page. The uninstall launcher removes the Windows service but keeps local settings and collected data by default.
+
 ## Run Locally
 
-This is only for development. A Windows installer/service package should be used for normal laptop or monitoring-server installs once packaging is added.
+This is only for development. Use the package above for normal laptop or monitoring-server installs.
 
 Use the workspace-local SDK if the machine does not have a .NET SDK on `PATH`:
 
@@ -122,6 +145,8 @@ GET /api/alerts
 GET /api/settings
 PUT /api/settings
 POST /api/settings/test-connection
+POST /api/settings/test-repository
+POST /api/ingest/snapshot
 GET /api/storage
 GET /api/collection-log?limit=200
 GET /api/servers/{serverId}/waits?hours=1&limit=20
@@ -143,7 +168,7 @@ For the current thin slice, "alert-worthy" means connection failures or collecto
 
 ## Storage
 
-Hot data:
+Default local storage:
 
 ```powershell
 D:\gitbhub\PerformanceMonitor\Headless\data\headless\performance-monitor.duckdb
@@ -156,6 +181,14 @@ D:\gitbhub\PerformanceMonitor\Headless\data\headless\parquet
 ```
 
 Archival runs in-process. Rows older than `HotDataDays` are copied to Parquet and deleted from the hot DuckDB tables.
+
+SQL Server repository storage can be selected in **Settings**. Point it at one parent SQL database, or use one repository per environment if that better matches the estate. The headless service creates its repository tables on first use.
+
+The ingest API is disabled until `Ingest API Key` is set in **Settings**. Child collectors should send that key as:
+
+```text
+X-PerformanceMonitor-Key: <key>
+```
 
 ## Where This Goes Next
 

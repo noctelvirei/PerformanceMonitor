@@ -17,6 +17,12 @@ releases/
 # NuGet
 packages/
 *.nupkg
+.nuget/
+
+# Workspace-local SDK/build state
+.dotnet-home/
+.dotnet-sdk/
+.tmp/
 
 # SQLite databases
 *.sqlite

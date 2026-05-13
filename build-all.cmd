@@ -31,6 +31,17 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
+
+:: Build Headless Estate Monitor
+call "%~dp0package-headless.cmd"
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo ERROR: Headless package failed!
+    popd
+    exit /b 1
+)
+
+echo.
 echo ========================================
 echo  All Builds Complete!
 echo ========================================

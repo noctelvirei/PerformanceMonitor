@@ -4,7 +4,7 @@ using PerformanceMonitor.Headless.Models;
 
 namespace PerformanceMonitor.Headless.Storage;
 
-public sealed class HeadlessStore
+public sealed class HeadlessStore : IHeadlessStore
 {
     private readonly IOptionsMonitor<MonitorOptions> _options;
     private readonly IHostEnvironment _environment;
@@ -24,6 +24,9 @@ public sealed class HeadlessStore
 
     public string DatabasePath => ResolvePath(_options.CurrentValue.StoragePath);
     public string ArchiveDirectory => ResolvePath(_options.CurrentValue.ArchiveDirectory);
+
+    public StorageInfoDto GetStorageInfo()
+        => new("DuckDb", DatabasePath, ArchiveDirectory, null, null);
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {

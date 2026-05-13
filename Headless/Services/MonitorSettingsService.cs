@@ -4,6 +4,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 using PerformanceMonitor.Headless.Models;
 using PerformanceMonitor.Headless.Security;
+using PerformanceMonitor.Headless.Storage;
 
 namespace PerformanceMonitor.Headless.Services;
 
@@ -12,15 +13,18 @@ public sealed class MonitorSettingsService
     private readonly IConfiguration _configuration;
     private readonly IHostEnvironment _environment;
     private readonly IOptionsMonitor<MonitorOptions> _options;
+    private readonly IHeadlessStore _store;
 
     public MonitorSettingsService(
         IConfiguration configuration,
         IHostEnvironment environment,
-        IOptionsMonitor<MonitorOptions> options)
+        IOptionsMonitor<MonitorOptions> options,
+        IHeadlessStore store)
     {
         _configuration = configuration;
         _environment = environment;
         _options = options;
+        _store = store;
     }
 
     public HeadlessSettingsDto GetSettings()
@@ -29,8 +33,11 @@ public sealed class MonitorSettingsService
         return new HeadlessSettingsDto
         {
             Urls = _configuration["Urls"] ?? "http://localhost:5155",
+            StorageProvider = string.IsNullOrWhiteSpace(monitor.StorageProvider) ? "DuckDb" : monitor.StorageProvider,
             StoragePath = monitor.StoragePath,
             ArchiveDirectory = monitor.ArchiveDirectory,
+            Repository = ToRepositoryDto(monitor.Repository),
+            IngestApiKey = monitor.IngestApiKey,
             CollectionIntervalSeconds = monitor.CollectionIntervalSeconds,
             MaxConcurrentServers = monitor.MaxConcurrentServers,
             CommandTimeoutSeconds = monitor.CommandTimeoutSeconds,
@@ -58,11 +65,14 @@ public sealed class MonitorSettingsService
 
         var root = new JsonObject
         {
-            ["Urls"] = string.IsNullOrWhiteSpace(settings.Urls) ? "http://localhost:5155" : settings.Urls.Trim(),
-            ["Monitor"] = new JsonObject
-            {
+                ["Urls"] = string.IsNullOrWhiteSpace(settings.Urls) ? "http://localhost:5155" : settings.Urls.Trim(),
+                ["Monitor"] = new JsonObject
+                {
+                ["StorageProvider"] = string.IsNullOrWhiteSpace(settings.StorageProvider) ? "DuckDb" : settings.StorageProvider.Trim(),
                 ["StoragePath"] = settings.StoragePath,
                 ["ArchiveDirectory"] = settings.ArchiveDirectory,
+                ["Repository"] = ToRepositoryJson(settings.Repository, _options.CurrentValue.Repository),
+                ["IngestApiKey"] = settings.IngestApiKey,
                 ["CollectionIntervalSeconds"] = settings.CollectionIntervalSeconds,
                 ["MaxConcurrentServers"] = settings.MaxConcurrentServers,
                 ["CommandTimeoutSeconds"] = settings.CommandTimeoutSeconds,
@@ -80,6 +90,29 @@ public sealed class MonitorSettingsService
         if (_configuration is IConfigurationRoot rootConfiguration)
         {
             rootConfiguration.Reload();
+        }
+
+        await _store.InitializeAsync(cancellationToken);
+    }
+
+    public async Task<TestConnectionResult> TestRepositoryAsync(RepositorySettingsDto repository, CancellationToken cancellationToken)
+    {
+        var option = ToRepositoryOption(repository, _options.CurrentValue.Repository);
+        var connectionString = option.ResolveConnectionString();
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return new TestConnectionResult(false, "No repository connection details.");
+        }
+
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            return new TestConnectionResult(true, "Repository connection OK.");
+        }
+        catch (Exception ex) when (ex is SqlException or InvalidOperationException)
+        {
+            return new TestConnectionResult(false, ex.Message);
         }
     }
 
@@ -132,6 +165,20 @@ public sealed class MonitorSettingsService
             Enabled = server.Enabled
         };
 
+    private static RepositorySettingsDto ToRepositoryDto(RepositoryOptions repository)
+        => new()
+        {
+            ConnectionMode = string.IsNullOrWhiteSpace(repository.ConnectionMode) ? InferRepositoryConnectionMode(repository) : repository.ConnectionMode,
+            DataSource = repository.DataSource,
+            InitialCatalog = string.IsNullOrWhiteSpace(repository.InitialCatalog) ? "PerformanceMonitorRepository" : repository.InitialCatalog,
+            UserId = repository.UserId,
+            HasPassword = !string.IsNullOrWhiteSpace(repository.ProtectedPassword),
+            Encrypt = string.IsNullOrWhiteSpace(repository.Encrypt) ? "Optional" : repository.Encrypt,
+            TrustServerCertificate = repository.TrustServerCertificate,
+            ConnectionString = repository.ConnectionString,
+            ConnectionStringEnvironmentVariable = repository.ConnectionStringEnvironmentVariable
+        };
+
     private static string InferConnectionMode(MonitoredServerOptions server)
     {
         if (!string.IsNullOrWhiteSpace(server.ConnectionStringEnvironmentVariable))
@@ -145,6 +192,21 @@ public sealed class MonitorSettingsService
         }
 
         return string.IsNullOrWhiteSpace(server.UserId) ? "Windows" : "Sql";
+    }
+
+    private static string InferRepositoryConnectionMode(RepositoryOptions repository)
+    {
+        if (!string.IsNullOrWhiteSpace(repository.ConnectionStringEnvironmentVariable))
+        {
+            return "EnvironmentVariable";
+        }
+
+        if (!string.IsNullOrWhiteSpace(repository.ConnectionString))
+        {
+            return "ConnectionString";
+        }
+
+        return string.IsNullOrWhiteSpace(repository.UserId) ? "Windows" : "Sql";
     }
 
     private static JsonArray ToCollectorsJson(IEnumerable<CollectorScheduleOptions> collectors)
@@ -191,6 +253,23 @@ public sealed class MonitorSettingsService
         return array;
     }
 
+    private static JsonObject ToRepositoryJson(RepositorySettingsDto repository, RepositoryOptions existing)
+    {
+        var option = ToRepositoryOption(repository, existing);
+        return new JsonObject
+        {
+            ["ConnectionMode"] = option.ConnectionMode,
+            ["DataSource"] = option.DataSource,
+            ["InitialCatalog"] = option.InitialCatalog,
+            ["UserId"] = option.UserId,
+            ["ProtectedPassword"] = option.ProtectedPassword,
+            ["Encrypt"] = option.Encrypt,
+            ["TrustServerCertificate"] = option.TrustServerCertificate,
+            ["ConnectionString"] = option.ConnectionString,
+            ["ConnectionStringEnvironmentVariable"] = option.ConnectionStringEnvironmentVariable
+        };
+    }
+
     private static MonitoredServerOptions ToOption(ServerSettingsDto server, MonitoredServerOptions? existing)
     {
         var mode = string.IsNullOrWhiteSpace(server.ConnectionMode) ? "Windows" : server.ConnectionMode.Trim();
@@ -216,9 +295,33 @@ public sealed class MonitorSettingsService
         };
     }
 
+    private static RepositoryOptions ToRepositoryOption(RepositorySettingsDto repository, RepositoryOptions? existing)
+    {
+        var mode = string.IsNullOrWhiteSpace(repository.ConnectionMode) ? "Windows" : repository.ConnectionMode.Trim();
+        var protectedPassword = string.IsNullOrWhiteSpace(repository.Password)
+            ? existing?.ProtectedPassword
+            : LocalSecretProtector.Protect(repository.Password);
+
+        return new RepositoryOptions
+        {
+            ConnectionMode = mode,
+            DataSource = repository.DataSource.Trim(),
+            InitialCatalog = string.IsNullOrWhiteSpace(repository.InitialCatalog) ? "PerformanceMonitorRepository" : repository.InitialCatalog.Trim(),
+            UserId = string.IsNullOrWhiteSpace(repository.UserId) ? null : repository.UserId.Trim(),
+            ProtectedPassword = protectedPassword,
+            Encrypt = string.IsNullOrWhiteSpace(repository.Encrypt) ? "Optional" : repository.Encrypt.Trim(),
+            TrustServerCertificate = repository.TrustServerCertificate,
+            ConnectionString = mode.Equals("ConnectionString", StringComparison.OrdinalIgnoreCase) ? repository.ConnectionString : null,
+            ConnectionStringEnvironmentVariable = mode.Equals("EnvironmentVariable", StringComparison.OrdinalIgnoreCase) ? repository.ConnectionStringEnvironmentVariable : null
+        };
+    }
+
     private static void Validate(HeadlessSettingsDto settings)
     {
         settings.CollectionIntervalSeconds = Math.Clamp(settings.CollectionIntervalSeconds, 10, 86400);
+        settings.StorageProvider = string.Equals(settings.StorageProvider, "SqlServer", StringComparison.OrdinalIgnoreCase)
+            ? "SqlServer"
+            : "DuckDb";
         settings.MaxConcurrentServers = Math.Clamp(settings.MaxConcurrentServers, 1, 128);
         settings.CommandTimeoutSeconds = Math.Clamp(settings.CommandTimeoutSeconds, 1, 600);
         settings.ArchiveIntervalMinutes = Math.Clamp(settings.ArchiveIntervalMinutes, 0, 10080);

@@ -29,14 +29,14 @@ public sealed class SqlEstateCollectorService : BackgroundService
     };
 
     private readonly IOptionsMonitor<MonitorOptions> _options;
-    private readonly HeadlessStore _store;
+    private readonly IHeadlessStore _store;
     private readonly ILogger<SqlEstateCollectorService> _logger;
     private readonly Dictionary<(string ServerId, string CollectorName), DateTime> _lastRuns = new();
     private DateTime _lastArchiveTime = DateTime.UtcNow;
 
     public SqlEstateCollectorService(
         IOptionsMonitor<MonitorOptions> options,
-        HeadlessStore store,
+        IHeadlessStore store,
         ILogger<SqlEstateCollectorService> logger)
     {
         _options = options;
@@ -49,10 +49,13 @@ public sealed class SqlEstateCollectorService : BackgroundService
         await _store.InitializeAsync(stoppingToken);
         await _store.UpsertConfiguredServersAsync(_options.CurrentValue.Servers, stoppingToken);
 
+        var storage = _store.GetStorageInfo();
         _logger.LogInformation(
-            "Headless monitor started. DuckDB={DatabasePath}; Parquet={ArchiveDirectory}",
-            _store.DatabasePath,
-            _store.ArchiveDirectory);
+            "Headless monitor started. Storage={Provider}; DuckDB={DuckDbPath}; SQL={SqlDataSource}/{SqlDatabase}",
+            storage.Provider,
+            storage.DuckDbPath,
+            storage.SqlDataSource,
+            storage.SqlDatabase);
 
         await RunCollectionCycleAsync(stoppingToken);
 
@@ -75,6 +78,7 @@ public sealed class SqlEstateCollectorService : BackgroundService
     private async Task RunCollectionCycleAsync(CancellationToken cancellationToken)
     {
         var options = _options.CurrentValue;
+        await _store.InitializeAsync(cancellationToken);
         await _store.UpsertConfiguredServersAsync(options.Servers, cancellationToken);
 
         var enabledServers = options.Servers
@@ -261,7 +265,7 @@ public sealed class SqlEstateCollectorService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Parquet archival failed");
+            _logger.LogWarning(ex, "Retention/archive cycle failed");
         }
     }
 

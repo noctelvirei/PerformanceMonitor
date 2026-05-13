@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Dashboard</title>
-  <link rel="stylesheet" href="/styles.css?v=settings-1">
+  <link rel="stylesheet" href="/styles.css?v=settings-2">
 </head>
 <body>
   <div class="app-shell">
@@ -128,6 +128,8 @@
             </div>
             <div class="settings-grid">
               <label>Website URL<input name="urls" type="text"></label>
+              <label>Storage<select name="storageProvider"><option value="DuckDb">DuckDB</option><option value="SqlServer">SQL Server</option></select></label>
+              <label>Ingest API Key<input name="ingestApiKey" type="password"></label>
               <label>Collection Seconds<input name="collectionIntervalSeconds" type="number" min="10"></label>
               <label>Max Concurrent Servers<input name="maxConcurrentServers" type="number" min="1"></label>
               <label>Command Timeout Seconds<input name="commandTimeoutSeconds" type="number" min="1"></label>
@@ -136,6 +138,30 @@
               <label class="wide">DuckDB Path<input name="storagePath" type="text"></label>
               <label class="wide">Parquet Folder<input name="archiveDirectory" type="text"></label>
             </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Repository</h2>
+              <button id="test-repository-button" type="button">Test</button>
+            </div>
+            <div class="settings-grid">
+              <label>Auth<select name="repositoryConnectionMode">
+                <option value="Windows">Windows</option>
+                <option value="Sql">SQL Login</option>
+                <option value="ConnectionString">Connection String</option>
+                <option value="EnvironmentVariable">Environment Variable</option>
+              </select></label>
+              <label>SQL Server<input name="repositoryDataSource" type="text"></label>
+              <label>Database<input name="repositoryInitialCatalog" type="text"></label>
+              <label>Encrypt<select name="repositoryEncrypt"><option value="Optional">Optional</option><option value="Mandatory">Mandatory</option><option value="Strict">Strict</option></select></label>
+              <label>User<input name="repositoryUserId" type="text"></label>
+              <label>Password<input name="repositoryPassword" type="password"></label>
+              <label>Trust Cert<select name="repositoryTrustServerCertificate"><option value="true">Yes</option><option value="false">No</option></select></label>
+              <label>Env Var<input name="repositoryConnectionStringEnvironmentVariable" type="text"></label>
+              <label class="wide">Connection String<input name="repositoryConnectionString" type="text"></label>
+            </div>
+            <div id="repository-status" class="settings-card-status"></div>
           </article>
 
           <article class="panel">
@@ -163,6 +189,6 @@
   </div>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script src="/app.js?v=settings-1"></script>
+  <script src="/app.js?v=settings-2"></script>
 </body>
 </html>

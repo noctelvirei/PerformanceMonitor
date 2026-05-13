@@ -31,6 +31,8 @@ const els = {
   settingsStatus: document.getElementById("settings-status"),
   settingsServerList: document.getElementById("settings-server-list"),
   settingsCollectorList: document.getElementById("settings-collector-list"),
+  testRepository: document.getElementById("test-repository-button"),
+  repositoryStatus: document.getElementById("repository-status"),
   addServer: document.getElementById("add-server-button"),
   refresh: document.getElementById("refresh-button"),
   notify: document.getElementById("notify-button"),
@@ -43,6 +45,7 @@ els.back.addEventListener("click", () => navigateOverview());
 els.settingsButton.addEventListener("click", () => navigateSettings());
 els.settingsBack.addEventListener("click", () => navigateOverview());
 els.addServer.addEventListener("click", () => addSettingsServer());
+els.testRepository.addEventListener("click", () => testRepository());
 els.settingsForm.addEventListener("submit", event => {
   event.preventDefault();
   saveSettings();
@@ -432,8 +435,11 @@ function renderSettings() {
   if (!settings) return;
 
   setFormValue("urls", settings.urls);
+  setFormValue("storageProvider", settings.storageProvider || "DuckDb");
+  setFormValue("ingestApiKey", settings.ingestApiKey || "");
   setFormValue("storagePath", settings.storagePath);
   setFormValue("archiveDirectory", settings.archiveDirectory);
+  renderRepositorySettings(settings.repository || {});
   setFormValue("collectionIntervalSeconds", settings.collectionIntervalSeconds);
   setFormValue("maxConcurrentServers", settings.maxConcurrentServers);
   setFormValue("commandTimeoutSeconds", settings.commandTimeoutSeconds);
@@ -448,6 +454,23 @@ function renderSettings() {
   els.settingsCollectorList.innerHTML = "";
   for (const collector of settings.collectors || []) {
     els.settingsCollectorList.appendChild(createCollectorSettingsRow(collector));
+  }
+}
+
+function renderRepositorySettings(repository) {
+  setFormValue("repositoryConnectionMode", repository.connectionMode || "Windows");
+  setFormValue("repositoryDataSource", repository.dataSource || "");
+  setFormValue("repositoryInitialCatalog", repository.initialCatalog || "PerformanceMonitorRepository");
+  setFormValue("repositoryUserId", repository.userId || "");
+  setFormValue("repositoryPassword", "");
+  setFormValue("repositoryEncrypt", repository.encrypt || "Optional");
+  setFormValue("repositoryTrustServerCertificate", String(repository.trustServerCertificate !== false));
+  setFormValue("repositoryConnectionString", repository.connectionString || "");
+  setFormValue("repositoryConnectionStringEnvironmentVariable", repository.connectionStringEnvironmentVariable || "");
+
+  const passwordField = els.settingsForm.elements.repositoryPassword;
+  if (passwordField) {
+    passwordField.placeholder = repository.hasPassword ? "Saved" : "";
   }
 }
 
@@ -557,11 +580,26 @@ async function testSettingsServer(card) {
   status.className = `settings-card-status ${response.ok ? "green" : "red"}`;
 }
 
+async function testRepository() {
+  els.repositoryStatus.textContent = "Testing...";
+  const response = await fetch("/api/settings/test-repository", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ repository: collectRepositorySettings() })
+  });
+  const result = await response.json().catch(() => ({ message: response.statusText }));
+  els.repositoryStatus.textContent = result.message || (response.ok ? "Repository connection OK." : "Repository connection failed.");
+  els.repositoryStatus.className = `settings-card-status ${response.ok ? "green" : "red"}`;
+}
+
 function collectSettings() {
   return {
     urls: getFormValue("urls"),
+    storageProvider: getFormValue("storageProvider"),
+    ingestApiKey: getFormValue("ingestApiKey"),
     storagePath: getFormValue("storagePath"),
     archiveDirectory: getFormValue("archiveDirectory"),
+    repository: collectRepositorySettings(),
     collectionIntervalSeconds: getNumberFormValue("collectionIntervalSeconds"),
     maxConcurrentServers: getNumberFormValue("maxConcurrentServers"),
     commandTimeoutSeconds: getNumberFormValue("commandTimeoutSeconds"),
@@ -569,6 +607,20 @@ function collectSettings() {
     hotDataDays: getNumberFormValue("hotDataDays"),
     servers: [...els.settingsServerList.querySelectorAll(".settings-card")].map(collectServerCard),
     collectors: [...els.settingsCollectorList.querySelectorAll(".settings-card")].map(collectCollectorCard)
+  };
+}
+
+function collectRepositorySettings() {
+  return {
+    connectionMode: getFormValue("repositoryConnectionMode"),
+    dataSource: getFormValue("repositoryDataSource"),
+    initialCatalog: getFormValue("repositoryInitialCatalog"),
+    userId: getFormValue("repositoryUserId"),
+    password: getFormValue("repositoryPassword"),
+    encrypt: getFormValue("repositoryEncrypt"),
+    trustServerCertificate: getFormValue("repositoryTrustServerCertificate") === "true",
+    connectionString: getFormValue("repositoryConnectionString"),
+    connectionStringEnvironmentVariable: getFormValue("repositoryConnectionStringEnvironmentVariable")
   };
 }
 

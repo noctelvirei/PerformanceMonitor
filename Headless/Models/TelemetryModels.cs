@@ -58,6 +58,40 @@ public sealed record EstateSummaryDto(
     IReadOnlyList<ServerHealthDto> Servers,
     IReadOnlyList<ActiveAlertDto> ActiveAlerts);
 
+public sealed record StorageInfoDto(
+    string Provider,
+    string? DuckDbPath,
+    string? ParquetDirectory,
+    string? SqlDataSource,
+    string? SqlDatabase);
+
+public sealed class IngestSnapshotDto
+{
+    public IngestServerDto Server { get; set; } = new();
+    public DateTime? CollectionTime { get; set; }
+    public string Status { get; set; } = "ONLINE";
+    public string? ErrorMessage { get; set; }
+    public ServerPropertiesSnapshot? ServerProperties { get; set; }
+    public List<WaitStatSnapshot> WaitStats { get; set; } = [];
+    public List<CpuSample> CpuSamples { get; set; } = [];
+    public List<CollectionLogDto> CollectionLog { get; set; } = [];
+}
+
+public sealed class IngestServerDto
+{
+    public string Id { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Purpose { get; set; } = "Unassigned";
+    public bool Enabled { get; set; } = true;
+}
+
+public sealed record IngestResultDto(
+    bool Success,
+    int ServerPropertiesRows,
+    int WaitRows,
+    int CpuRows,
+    int LogRows);
+
 public sealed record ServerPropertiesSnapshot(
     string MachineName,
     string? InstanceName,
