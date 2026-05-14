@@ -1021,6 +1021,12 @@
           "xunit.v3.runner.common": "[3.2.2]"
         }
       },
+      "performancemonitor.collectors": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.SqlClient": "[7.0.1, )"
+        }
+      },
       "performancemonitorlite": {
         "type": "Project",
         "dependencies": {
@@ -1034,6 +1040,7 @@
           "Microsoft.Extensions.Logging": "[10.0.7, )",
           "ModelContextProtocol": "[1.2.0, )",
           "ModelContextProtocol.AspNetCore": "[1.2.0, )",
+          "PerformanceMonitor.Collectors": "[1.0.0, )",
           "ScottPlot.WPF": "[5.1.58, )",
           "System.Text.Json": "[10.0.7, )",
           "Velopack": "[0.0.1298, )"

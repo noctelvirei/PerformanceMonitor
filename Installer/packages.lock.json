@@ -22,9 +22,9 @@
       },
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
-        "requested": "[8.0.26, )",
-        "resolved": "8.0.26",
-        "contentHash": "o7/yVssM2r9Wyln2s9edBd5ANZXqdSdBI+g7JqXkyJmXrhs2WsJp25K5yPnYrTgdKBCjKB8bg+O2oew4sgzFaA=="
+        "requested": "[8.0.27, )",
+        "resolved": "8.0.27",
+        "contentHash": "rQi9TxifHRnXP7lVRZH05DxD2/XGbJp12q0ozcbrlBlBnyyzssFTH/2vLhtKWUp2CT1qVscTrcYTFiwTyKPKRg=="
       },
       "Azure.Core": {
         "type": "Transitive",
@@ -331,7 +331,14 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Data.SqlClient": "[7.0.1, )",
-          "Microsoft.Data.SqlClient.Extensions.Azure": "[1.0.0, )"
+          "Microsoft.Data.SqlClient.Extensions.Azure": "[1.0.0, )",
+          "PerformanceMonitor.SqlConnectivity": "[1.0.0, )"
+        }
+      },
+      "performancemonitor.sqlconnectivity": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.SqlClient": "[7.0.1, )"
         }
       }
     },
