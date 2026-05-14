@@ -1186,6 +1186,18 @@ canvas {
   align-items: center;
 }
 
+.discovery-result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.discovery-result-toolbar div {
+  display: grid;
+  gap: 3px;
+}
+
 .discovery-result div {
   display: grid;
   gap: 3px;
@@ -1599,6 +1611,7 @@ textarea:focus-visible {
 .mcp-copy-actions button,
 .panel-header > button,
 .settings-card-header button,
+.discovery-result-toolbar button,
 .discovery-result button {
   background: #1a2737;
 }

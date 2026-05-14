@@ -135,72 +135,82 @@ function wireSettingsNavigation() {
   activate(buttons.find((button) => button.classList.contains("active"))?.dataset.settingsTarget || buttons[0].dataset.settingsTarget || "");
 }
 
+const scanDefinitions = {
+  TCPPort: ["TCP port", "Tests configured SQL ports. This is the best default where SQL Browser is disabled."],
+  SQLService: ["SQL service inventory", "Uses CIM/WMI to list SQL services. Requires Windows rights on the target host."],
+  DNSResolve: ["DNS resolve", "Checks name resolution without proving SQL is present."],
+  Ping: ["Ping", "Checks ICMP reachability. Failure does not stop dbatools scanning."],
+  SPN: ["SPN check", "Verifies SQL service principal names in Active Directory."],
+  Browser: ["SQL Browser", "Queries SQL Browser. Keep it for estates where the Browser service is enabled."],
+  SqlConnect: ["SQL connect", "Attempts a SQL login. Highest confidence, but it creates authentication attempts."],
+  Default: ["dbatools default", "Runs the dbatools default scan set: all scans except SQL connect."],
+  All: ["All scan types", "Runs every dbatools scan type, including SQL connect."],
+  "SPN,TCPPort": ["SPN + TCP port", "Pairs AD service registration checks with configured port checks."],
+  "DNSResolve,TCPPort": ["DNS + TCP port", "Resolves the host name, then tests configured SQL ports."],
+  "Ping,TCPPort": ["Ping + TCP port", "Checks reachability, then tests configured SQL ports."],
+  "Browser,TCPPort": ["Browser + TCP port", "Queries SQL Browser and tests configured SQL ports."],
+  "TCPPort,Browser": ["TCP port + Browser", "Tests configured SQL ports first, then SQL Browser."],
+  RegisteredPreview: ["Preview registered list", "Runs Get-DbaRegServer and shows the registered targets before you add them."]
+};
+
+const allScanValues = ["TCPPort", "SQLService", "DNSResolve", "Ping", "SPN", "Browser", "SqlConnect", "Default", "All"];
+
+function buildScanOptions(preferredValues) {
+  const values = [...preferredValues, ...allScanValues];
+  return [...new Set(values)]
+    .filter(value => scanDefinitions[value])
+    .map(value => [value, ...scanDefinitions[value]]);
+}
+
 const discoveryModeOptions = {
   targets: {
     modeHelp: "Scan a known list of servers or hosts.",
+    discoverySource: "Targets",
     discoveryType: "",
     visibleFields: new Set(["targets", "tcpPorts"]),
-    scans: [
-      ["Browser,TCPPort", "Browser + TCP port", "Good default for named SQL hosts."],
-      ["Browser", "Browser only", "Checks the SQL Browser service without port probing."],
-      ["TCPPort", "TCP port only", "Tests the configured SQL ports."],
-      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
-    ]
+    scans: buildScanOptions(["TCPPort", "SQLService", "SqlConnect"])
+  },
+  registered: {
+    modeHelp: "Read SQL Server names already registered in SSMS, Azure Data Studio, or a Central Management Server. This previews the list first; add the ones you want after checking it.",
+    discoverySource: "RegisteredServers",
+    discoveryType: "",
+    visibleFields: new Set(["registeredCms", "registeredGroups", "registeredPatterns", "registeredIncludeLocal"]),
+    scans: [["RegisteredPreview", ...scanDefinitions.RegisteredPreview]]
   },
   spn: {
     modeHelp: "Find registered SQL Server service principal names in Active Directory. This is a targeted shortcut before considering an IP sweep.",
+    discoverySource: "DiscoveryType",
     discoveryType: "DomainSPN",
     visibleFields: new Set(["domainController", "tcpPorts"]),
-    scans: [
-      ["Browser,TCPPort", "Browser + TCP port", "Validates SPN candidates with SQL Browser and configured ports."],
-      ["TCPPort", "TCP port only", "Checks the configured SQL ports for SPN candidates."],
-      ["Browser", "Browser only", "Asks SQL Browser for instance details on SPN candidates."],
-      ["SPN,TCPPort", "SPN + TCP port", "Keeps validation close to AD registrations and port checks."],
-      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
-    ]
+    scans: buildScanOptions(["TCPPort", "SPN,TCPPort", "SPN"])
   },
   domainServer: {
     modeHelp: "Find enabled Windows Server objects in Active Directory, then scan them for SQL.",
+    discoverySource: "DiscoveryType",
     discoveryType: "DomainServer",
     visibleFields: new Set(["domainController", "tcpPorts"]),
-    scans: [
-      ["Browser,TCPPort", "Browser + TCP port", "Balanced check for likely SQL on AD server objects."],
-      ["SqlService", "SQL service inventory", "Uses CIM/WMI service enumeration where the service account has rights."],
-      ["TCPPort", "TCP port only", "Checks configured SQL ports on AD server objects."],
-      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
-    ]
+    scans: buildScanOptions(["TCPPort", "SQLService", "DNSResolve,TCPPort", "Ping,TCPPort"])
   },
   domain: {
     modeHelp: "Find domain computer objects, then scan them for SQL. This can be broad; SPNs or AD Windows servers are usually sharper first choices.",
+    discoverySource: "DiscoveryType",
     discoveryType: "Domain",
     visibleFields: new Set(["domainController", "tcpPorts"]),
-    scans: [
-      ["Browser,TCPPort", "Browser + TCP port", "Balanced check across domain computer candidates."],
-      ["TCPPort", "TCP port only", "Checks configured SQL ports across domain computer candidates."],
-      ["SqlService", "SQL service inventory", "Uses CIM/WMI service enumeration where the service account has rights."],
-      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
-    ]
+    scans: buildScanOptions(["TCPPort", "SQLService", "DNSResolve,TCPPort", "Ping,TCPPort"])
   },
   ipRange: {
     modeHelp: "Scan a subnet or explicit IP range. Use this when AD/SPN discovery will miss machines or you need to cover a network segment.",
+    discoverySource: "DiscoveryType",
     discoveryType: "IPRange",
     visibleFields: new Set(["ipRange", "tcpPorts"]),
-    scans: [
-      ["TCPPort", "TCP port", "Fastest and clearest option for IP ranges."],
-      ["TCPPort,Browser", "TCP port + Browser", "Adds Browser checks after port probing."],
-      ["Ping,TCPPort", "Ping + TCP port", "Pings first, then checks SQL ports."],
-      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
-    ]
+    scans: buildScanOptions(["TCPPort", "Ping,TCPPort", "DNSResolve,TCPPort", "TCPPort,Browser"])
   },
   broadcast: {
-    modeHelp: "Use SQL Browser broadcast enumeration. No target list or domain controller is required.",
+    modeHelp: "Use SQL Browser broadcast enumeration. No target list or domain controller is required, but this only helps where SQL Browser is enabled.",
+    discoverySource: "DiscoveryType",
     discoveryType: "DataSourceEnumeration",
     visibleFields: new Set(["tcpPorts"]),
-    scans: [
-      ["Browser", "Browser", "Matches the broadcast discovery method."],
-      ["Browser,TCPPort", "Browser + TCP port", "Adds default SQL port checks to browser discovery."],
-      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
-    ]
+    scans: buildScanOptions(["Browser", "Browser,TCPPort", "TCPPort"])
   }
 };
 
@@ -222,6 +232,7 @@ function wireDiscoveryModeControls(form) {
     const button = event.target.closest("[data-discovery-mode-option]");
     if (!button) return;
     mode.value = button.dataset.discoveryModeOption || "targets";
+    scan.value = "";
     updateDiscoveryModeControls(form);
   });
   scanList.addEventListener("click", event => {
@@ -242,6 +253,7 @@ function updateDiscoveryModeControls(form) {
   const scanList = form.querySelector("[data-discovery-scan-list]");
 
   form.elements.discoveryMode.value = mode;
+  form.elements.discoverySource.value = config.discoverySource || "";
   form.elements.discoveryMethod.value = config.discoveryType;
   scanField.value = config.scans.some(([value]) => value === scanField.value) ? scanField.value : config.scans[0][0];
   renderDiscoveryModeButtons(form, mode);
@@ -478,6 +490,26 @@ function renderDiscoveryResults(container, instances, onAddDiscoveredServer) {
     return;
   }
 
+  const toolbar = document.createElement("section");
+  toolbar.className = "settings-card compact discovery-result-toolbar";
+  toolbar.innerHTML = `
+    <div>
+      <strong>${instances.length} candidate${instances.length === 1 ? "" : "s"}</strong>
+      <span>Review the list, then add the servers you want to monitor.</span>
+    </div>
+    <button type="button">Add all shown</button>
+  `;
+  toolbar.querySelector("button").addEventListener("click", () => {
+    for (const instance of instances) {
+      onAddDiscoveredServer(instance);
+    }
+    for (const button of container.querySelectorAll(".discovery-result button")) {
+      button.disabled = true;
+      button.textContent = "Added";
+    }
+  });
+  container.appendChild(toolbar);
+
   for (const instance of instances) {
     const row = document.createElement("section");
     row.className = "settings-card compact discovery-result";
@@ -595,66 +627,78 @@ function collectAlertRules(form) {
 
 export function collectDiscoverySettings(form) {
   const mode = getFormValue(form, "discoveryMode") || "targets";
-  const scanTypes = getFormValue(form, "discoveryScanPreset") || "Browser,TCPPort";
+  const discoverySource = getFormValue(form, "discoverySource");
+  const scanTypes = getFormValue(form, "discoveryScanPreset") || "TCPPort";
   const tcpPorts = getFormValue(form, "discoveryTcpPorts") || "1433";
   const purpose = getFormValue(form, "discoveryPurpose") || "Development";
   const minimumConfidence = getFormValue(form, "discoveryMinimumConfidence") || "Medium";
   const timeoutSeconds = getNumberFormValue(form, "discoveryTimeoutSeconds") || 120;
+  const baseRequest = {
+    discoverySource,
+    scanTypes,
+    tcpPorts,
+    minimumConfidence,
+    purpose,
+    timeoutSeconds,
+    registeredServerSqlInstance: "",
+    registeredServerGroups: "",
+    registeredServerPatterns: "",
+    registeredServerIncludeLocal: false
+  };
 
   if (mode === "targets") {
     const targets = requireDiscoveryValue(form, "discoveryTargets", "Enter at least one target server or host.");
     return {
+      ...baseRequest,
       targets,
       discoveryTypes: "",
-      scanTypes,
       ipAddresses: "",
-      tcpPorts,
+      domainController: ""
+    };
+  }
+
+  if (mode === "registered") {
+    return {
+      ...baseRequest,
+      targets: "",
+      discoveryTypes: "",
+      scanTypes: "",
+      ipAddresses: "",
       domainController: "",
-      minimumConfidence,
-      purpose,
-      timeoutSeconds
+      registeredServerSqlInstance: getFormValue(form, "discoveryRegisteredServerSqlInstance"),
+      registeredServerGroups: getFormValue(form, "discoveryRegisteredServerGroups"),
+      registeredServerPatterns: getFormValue(form, "discoveryRegisteredServerPatterns"),
+      registeredServerIncludeLocal: getFormValue(form, "discoveryRegisteredServerIncludeLocal") === "true"
     };
   }
 
   if (mode === "ipRange") {
     const ipAddresses = requireDiscoveryValue(form, "discoveryIpAddresses", "Enter an IP range, for example 10.1.164.0/24.");
     return {
+      ...baseRequest,
       targets: "",
       discoveryTypes: "IPRange",
-      scanTypes,
       ipAddresses,
-      tcpPorts,
-      domainController: "",
-      minimumConfidence,
-      purpose,
-      timeoutSeconds
+      domainController: ""
     };
   }
 
   if (mode === "spn" || mode === "domainServer" || mode === "domain") {
     return {
+      ...baseRequest,
       targets: "",
       discoveryTypes: getFormValue(form, "discoveryMethod") || "DomainSPN",
-      scanTypes,
       ipAddresses: "",
-      tcpPorts,
-      domainController: getFormValue(form, "discoveryDomainController"),
-      minimumConfidence,
-      purpose,
-      timeoutSeconds
+      domainController: getFormValue(form, "discoveryDomainController")
     };
   }
 
   return {
+    ...baseRequest,
     targets: "",
     discoveryTypes: "DataSourceEnumeration",
-    scanTypes,
     ipAddresses: "",
-    tcpPorts,
-    domainController: "",
-    minimumConfidence,
-    purpose,
-    timeoutSeconds
+    domainController: ""
   };
 }
 

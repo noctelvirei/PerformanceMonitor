@@ -374,6 +374,7 @@
                     <p data-discovery-mode-help>Choose one scope. The remaining options change to match it.</p>
                     <div class="discovery-choice-list" data-discovery-mode-list>
                       <button type="button" data-discovery-mode-option="targets"><strong>Known servers</strong><span>Scan a list of server names or SQL hosts directly.</span></button>
+                      <button type="button" data-discovery-mode-option="registered"><strong>Registered servers</strong><span>Preview servers from SSMS, Azure Data Studio, or a Central Management Server.</span></button>
                       <button type="button" data-discovery-mode-option="spn"><strong>Registered SQL SPNs</strong><span>Shortcut through Active Directory service registrations instead of sweeping a subnet.</span></button>
                       <button type="button" data-discovery-mode-option="domainServer"><strong>AD Windows servers</strong><span>Start from enabled Windows Server objects in Active Directory.</span></button>
                       <button type="button" data-discovery-mode-option="domain"><strong>AD computers</strong><span>Start from domain computer objects, then probe for SQL.</span></button>
@@ -381,6 +382,7 @@
                       <button type="button" data-discovery-mode-option="broadcast"><strong>SQL Browser broadcast</strong><span>Use SSMS-style SQL instance enumeration.</span></button>
                     </div>
                     <input name="discoveryMode" type="hidden" value="targets">
+                    <input name="discoverySource" type="hidden">
                     <input name="discoveryMethod" type="hidden">
                   </div>
                   <div class="discovery-choice-panel full">
@@ -391,6 +393,22 @@
                   <label class="wide" data-discovery-field="targets">Targets
                     <input name="discoveryTargets" type="text">
                     <span class="field-help">Known computer names or SQL hosts. When this is filled in, dbatools scans those targets directly.</span>
+                  </label>
+                  <label data-discovery-field="registeredCms">CMS SQL Instance
+                    <input name="discoveryRegisteredServerSqlInstance" type="text" placeholder="mylaptop or CMS-SQL-01">
+                    <span class="field-help">Optional. Leave blank for local SSMS/Azure Data Studio registrations; set this to read a Central Management Server.</span>
+                  </label>
+                  <label data-discovery-field="registeredGroups">Registered Groups
+                    <input name="discoveryRegisteredServerGroups" type="text" placeholder="dev or Production\Database Servers">
+                    <span class="field-help">Optional comma-separated Get-DbaRegServer groups. Supports hierarchical paths with backslashes.</span>
+                  </label>
+                  <label data-discovery-field="registeredPatterns">Name Patterns
+                    <input name="discoveryRegisteredServerPatterns" type="text" placeholder="^(dvw|dnx)">
+                    <span class="field-help">Optional regex matched by dbatools against registered Name and ServerName.</span>
+                  </label>
+                  <label data-discovery-field="registeredIncludeLocal">Include Local
+                    <select name="discoveryRegisteredServerIncludeLocal"><option value="false">No</option><option value="true">Yes</option></select>
+                    <span class="field-help">When using a CMS, also include local SSMS/Azure Data Studio registrations for the service account.</span>
                   </label>
                   <label data-discovery-field="ipRange">IP Ranges
                     <input name="discoveryIpAddresses" type="text" placeholder="10.1.164.0/24 or 10.1.164.1-10.1.164.254">

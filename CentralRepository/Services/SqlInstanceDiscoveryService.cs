@@ -57,9 +57,11 @@ public sealed class SqlInstanceDiscoveryService
 
         try
         {
+            var discoverySource = request.DiscoverySource?.Trim() ?? "";
+            var useRegisteredServers = discoverySource.Equals("RegisteredServers", StringComparison.OrdinalIgnoreCase);
             var requestedDiscoveryTypes = SplitList(request.DiscoveryTypes);
-            var discoveryTypes = requestedDiscoveryTypes;
-            if (discoveryTypes.Length == 0)
+            var discoveryTypes = useRegisteredServers ? [] : requestedDiscoveryTypes;
+            if (!useRegisteredServers && discoveryTypes.Length == 0)
             {
                 discoveryTypes = ["DomainSPN", "DataSourceEnumeration"];
             }
@@ -67,16 +69,17 @@ public sealed class SqlInstanceDiscoveryService
             var scanTypes = SplitList(request.ScanTypes);
             if (scanTypes.Length == 0)
             {
-                scanTypes = ["Browser"];
+                scanTypes = ["TCPPort"];
             }
 
             var targets = SplitList(request.Targets);
             var ipAddresses = SplitList(request.IpAddresses);
-            if (targets.Length == 0 && ipAddresses.Length > 0 && IsDefaultDiscoveryTypes(requestedDiscoveryTypes))
+            if (!useRegisteredServers && targets.Length == 0 && ipAddresses.Length > 0 && IsDefaultDiscoveryTypes(requestedDiscoveryTypes))
             {
                 discoveryTypes = ["IPRange"];
             }
-            else if (targets.Length == 0
+            else if (!useRegisteredServers
+                     && targets.Length == 0
                      && ipAddresses.Length > 0
                      && !discoveryTypes.Contains("IPRange", StringComparer.OrdinalIgnoreCase))
             {
@@ -84,8 +87,15 @@ public sealed class SqlInstanceDiscoveryService
             }
 
             var tcpPorts = ParseTcpPorts(request.TcpPorts);
-            ValidateDiscoveryRequest(targets, discoveryTypes, ipAddresses);
+            var registeredServerGroups = SplitList(request.RegisteredServerGroups);
+            var registeredServerPatterns = SplitList(request.RegisteredServerPatterns);
+            ValidateDiscoveryRequest(useRegisteredServers, targets, discoveryTypes, ipAddresses);
             var phases = BuildDiscoveryPhases(
+                useRegisteredServers,
+                request.RegisteredServerSqlInstance?.Trim() ?? "",
+                registeredServerGroups,
+                registeredServerPatterns,
+                request.RegisteredServerIncludeLocal,
                 targets,
                 discoveryTypes,
                 scanTypes,
@@ -199,7 +209,9 @@ public sealed class SqlInstanceDiscoveryService
         progress($"Using discovery temp folder {tempDirectory}.");
 
         var shell = ResolvePowerShellExecutable(tempDirectory);
-        progress($"Using {shell} to run dbatools Find-DbaInstance.");
+        progress(phase.Input.UseRegisteredServers
+            ? $"Using {shell} to run dbatools Get-DbaRegServer."
+            : $"Using {shell} to run dbatools Find-DbaInstance.");
         var script = """
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -211,9 +223,64 @@ if (-not (Get-Module -ListAvailable -Name dbatools)) {
 
 Import-Module dbatools -ErrorAction Stop
 $request = $env:PM_SQL_DISCOVERY_REQUEST | ConvertFrom-Json
+
+if ($request.useRegisteredServers) {
+    $regParams = @{
+        WarningAction = 'SilentlyContinue'
+        ErrorAction = 'Stop'
+        EnableException = $true
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($request.registeredServerSqlInstance)) {
+        $regParams.SqlInstance = $request.registeredServerSqlInstance
+    }
+
+    if ($request.registeredServerGroups -and $request.registeredServerGroups.Count -gt 0) {
+        $regParams.Group = @($request.registeredServerGroups)
+    }
+
+    if ($request.registeredServerPatterns -and $request.registeredServerPatterns.Count -gt 0) {
+        $regParams.Pattern = @($request.registeredServerPatterns)
+    }
+
+    if ($request.registeredServerIncludeLocal) {
+        $regParams.IncludeLocal = $true
+    }
+
+    $registered = @(Get-DbaRegServer @regParams)
+    if ($registered.Count -eq 0) {
+        throw 'Get-DbaRegServer returned no registered servers for the selected CMS, group, and pattern. If this service runs as a Windows service, local SSMS registrations must exist for that service account, or use a Central Management Server in SqlInstance.'
+    }
+
+    $registered |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.ServerName) } |
+        Sort-Object ServerName -Unique |
+        ForEach-Object {
+            $displayName = if (-not [string]::IsNullOrWhiteSpace([string]$_.Name)) { [string]$_.Name } else { [string]$_.ServerName }
+            [pscustomobject]@{
+                MachineName = [string]$_.ServerName
+                ComputerName = [string]$_.ServerName
+                InstanceName = $null
+                SqlInstance = [string]$_.ServerName
+                Port = $null
+                Confidence = 'Registered'
+                Availability = 'Not tested'
+                Ping = $null
+                TcpConnected = $null
+                SqlConnected = $null
+                DisplayName = $displayName
+                RegisteredGroup = [string]$_.Group
+                RegisteredSource = [string]$_.Source
+            }
+        } |
+        ConvertTo-Json -Depth 4 -Compress
+    exit
+}
+
 $params = @{
     MinimumConfidence = $request.minimumConfidence
     WarningAction = 'SilentlyContinue'
+    EnableException = $true
 }
 
 $hasTargets = $request.targets -and $request.targets.Count -gt 0
@@ -267,7 +334,8 @@ Find-DbaInstance @params |
         startInfo.Environment["TEMP"] = tempDirectory;
         startInfo.Environment["TMP"] = tempDirectory;
 
-        progress($"Starting Find-DbaInstance for {phase.Name}. Parameters: {phase.Plan}");
+        var dbatoolsCommand = phase.Input.UseRegisteredServers ? "Get-DbaRegServer" : "Find-DbaInstance";
+        progress($"Starting {dbatoolsCommand} for {phase.Name}. Parameters: {phase.Plan}");
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not start PowerShell for SQL Server discovery.");
         var processStartTime = DateTime.UtcNow;
@@ -323,7 +391,7 @@ Find-DbaInstance @params |
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "dbatools discovery failed." : error.Trim());
         }
 
-        progress($"Find-DbaInstance finished for {phase.Name}; collecting returned candidates.");
+        progress($"{dbatoolsCommand} finished for {phase.Name}; collecting returned candidates.");
         return output;
     }
 
@@ -380,9 +448,10 @@ Find-DbaInstance @params |
         }
 
         var serverId = BuildServerId(dataSource);
+        var displayName = GetString(element, "DisplayName") ?? dataSource;
         return new SqlInstanceDiscoveryResult(
             dataSource,
-            dataSource,
+            displayName,
             serverId,
             purpose,
             GetString(element, "MachineName") ?? GetString(element, "ComputerName"),
@@ -477,10 +546,16 @@ Find-DbaInstance @params |
     }
 
     private static void ValidateDiscoveryRequest(
+        bool useRegisteredServers,
         string[] targets,
         string[] discoveryTypes,
         string[] ipAddresses)
     {
+        if (useRegisteredServers)
+        {
+            return;
+        }
+
         if (targets.Length > 0)
         {
             return;
@@ -504,6 +579,11 @@ Find-DbaInstance @params |
     }
 
     private static List<DiscoveryPhase> BuildDiscoveryPhases(
+        bool useRegisteredServers,
+        string registeredServerSqlInstance,
+        string[] registeredServerGroups,
+        string[] registeredServerPatterns,
+        bool registeredServerIncludeLocal,
         string[] targets,
         string[] discoveryTypes,
         string[] scanTypes,
@@ -516,6 +596,26 @@ Find-DbaInstance @params |
         var phases = new List<DiscoveryPhase>();
         var scanVariants = BuildScanVariants(scanTypes, tcpPorts);
 
+        if (useRegisteredServers)
+        {
+            var input = new DbatoolsDiscoveryInput(
+                true,
+                registeredServerSqlInstance,
+                registeredServerGroups,
+                registeredServerPatterns,
+                registeredServerIncludeLocal,
+                [],
+                [],
+                [],
+                [],
+                [],
+                domainController,
+                minimumConfidence,
+                purpose);
+            phases.Add(new DiscoveryPhase("registered servers", DescribePlan(input), input));
+            return phases;
+        }
+
         if (targets.Length > 0)
         {
             foreach (var target in targets)
@@ -523,6 +623,11 @@ Find-DbaInstance @params |
                 foreach (var scan in scanVariants)
                 {
                     var input = new DbatoolsDiscoveryInput(
+                        false,
+                        "",
+                        [],
+                        [],
+                        false,
                         [target],
                         [],
                         scan.ScanTypes,
@@ -543,6 +648,11 @@ Find-DbaInstance @params |
             foreach (var scan in scanVariants)
             {
                 var input = new DbatoolsDiscoveryInput(
+                    false,
+                    "",
+                    [],
+                    [],
+                    false,
                     [],
                     ["IPRange"],
                     scan.ScanTypes,
@@ -560,6 +670,11 @@ Find-DbaInstance @params |
             foreach (var scan in scanVariants)
             {
                 var input = new DbatoolsDiscoveryInput(
+                    false,
+                    "",
+                    [],
+                    [],
+                    false,
                     [],
                     [discoveryType],
                     scan.ScanTypes,
@@ -577,6 +692,11 @@ Find-DbaInstance @params |
             foreach (var scan in scanVariants)
             {
                 var input = new DbatoolsDiscoveryInput(
+                    false,
+                    "",
+                    [],
+                    [],
+                    false,
                     [],
                     discoveryTypes,
                     scan.ScanTypes,
@@ -606,7 +726,7 @@ Find-DbaInstance @params |
             variants.Add(new ScanVariant(scanType, [scanType], []));
         }
 
-        return variants.Count == 0 ? [new ScanVariant("Browser", ["Browser"], [])] : variants;
+        return variants.Count == 0 ? [new ScanVariant("TCPPort", ["TCPPort"], tcpPorts)] : variants;
     }
 
     private static string DescribePlan(
@@ -635,7 +755,23 @@ Find-DbaInstance @params |
     }
 
     private static string DescribePlan(DbatoolsDiscoveryInput input)
-        => DescribePlan(input.Targets, input.DiscoveryTypes, input.ScanTypes, input.IpAddresses, input.TcpPorts, input.DomainController);
+    {
+        var description = DescribePlan(input.Targets, input.DiscoveryTypes, input.ScanTypes, input.IpAddresses, input.TcpPorts, input.DomainController);
+        if (!input.UseRegisteredServers)
+        {
+            return description;
+        }
+
+        var parts = new List<string>
+        {
+            "source=registered servers",
+            $"cms={(!string.IsNullOrWhiteSpace(input.RegisteredServerSqlInstance) ? input.RegisteredServerSqlInstance : "local registered servers")}",
+            $"groups={FormatList(input.RegisteredServerGroups, "all")}",
+            $"patterns={FormatList(input.RegisteredServerPatterns, "all")}",
+            $"include local={input.RegisteredServerIncludeLocal}"
+        };
+        return string.Join("; ", parts);
+    }
 
     private static string FormatList(string[] values, string emptyValue)
         => values.Length == 0 ? emptyValue : string.Join(",", values);
@@ -690,6 +826,11 @@ Find-DbaInstance @params |
             : null;
 
     private sealed record DbatoolsDiscoveryInput(
+        bool UseRegisteredServers,
+        string RegisteredServerSqlInstance,
+        string[] RegisteredServerGroups,
+        string[] RegisteredServerPatterns,
+        bool RegisteredServerIncludeLocal,
         string[] Targets,
         string[] DiscoveryTypes,
         string[] ScanTypes,

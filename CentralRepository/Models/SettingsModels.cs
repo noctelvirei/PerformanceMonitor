@@ -98,11 +98,16 @@ public sealed record TestConnectionResult(bool Success, string Message);
 public sealed class SqlInstanceDiscoveryRequest
 {
     public string Targets { get; set; } = "";
+    public string DiscoverySource { get; set; } = "";
     public string DiscoveryTypes { get; set; } = "DomainSPN,DataSourceEnumeration";
-    public string ScanTypes { get; set; } = "Browser,TCPPort";
+    public string ScanTypes { get; set; } = "TCPPort";
     public string IpAddresses { get; set; } = "";
     public string TcpPorts { get; set; } = "1433";
     public string DomainController { get; set; } = "";
+    public string RegisteredServerSqlInstance { get; set; } = "";
+    public string RegisteredServerGroups { get; set; } = "";
+    public string RegisteredServerPatterns { get; set; } = "";
+    public bool RegisteredServerIncludeLocal { get; set; }
     public string MinimumConfidence { get; set; } = "Medium";
     public string Purpose { get; set; } = "Development";
     public int TimeoutSeconds { get; set; } = 120;
