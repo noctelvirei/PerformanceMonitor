@@ -11,8 +11,8 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using DuckDB.NET.Data;
-using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
+using PerformanceMonitor.Collectors;
 using PerformanceMonitorLite.Models;
 
 namespace PerformanceMonitorLite.Services;
@@ -24,30 +24,6 @@ public partial class RemoteCollectorService
     /// </summary>
     private async Task<int> CollectWaitingTasksAsync(ServerConnection server, CancellationToken cancellationToken)
     {
-        string query = @"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-SELECT /* PerformanceMonitorLite */
-    session_id = wt.session_id,
-    wait_type = wt.wait_type,
-    wait_duration_ms = wt.wait_duration_ms,
-    blocking_session_id = wt.blocking_session_id,
-    database_name = d.name
-FROM sys.dm_os_waiting_tasks AS wt
-LEFT JOIN sys.dm_exec_requests AS er
-  ON er.session_id = wt.session_id
-LEFT JOIN sys.databases AS d
-  ON d.database_id = er.database_id
-WHERE wt.session_id >= 50
-AND   wt.session_id <> @@SPID
-AND   wt.wait_type IS NOT NULL
-AND   er.database_id <> ISNULL(DB_ID(N'PerformanceMonitor'), 0)
-/*EXCLUSION_FILTER*/
-OPTION(RECOMPILE);";
-
-        var (exclusionClause, _) = BuildDatabaseExclusionFilter(server.ExcludedDatabases, "d.name");
-        query = query.Replace("/*EXCLUSION_FILTER*/", exclusionClause);
-
         var serverId = GetServerId(server);
         var collectionTime = DateTime.UtcNow;
         var rowsCollected = 0;
@@ -56,12 +32,11 @@ OPTION(RECOMPILE);";
 
         var sqlSw = Stopwatch.StartNew();
         using var sqlConnection = await CreateConnectionAsync(server, cancellationToken);
-        using var command = new SqlCommand(query, sqlConnection);
-        command.CommandTimeout = CommandTimeoutSeconds;
-        var (_, exclusionParams) = BuildDatabaseExclusionFilter(server.ExcludedDatabases, "d.name");
-        foreach (var p in exclusionParams) command.Parameters.Add(p);
-
-        using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var waitingTasks = await SqlServerCollectors.CollectWaitingTasksAsync(
+            sqlConnection,
+            CommandTimeoutSeconds,
+            server.ExcludedDatabases,
+            cancellationToken);
         sqlSw.Stop();
         _lastSqlMs = sqlSw.ElapsedMilliseconds;
 
@@ -73,26 +48,19 @@ OPTION(RECOMPILE);";
 
             using (var appender = duckConnection.CreateAppender("waiting_tasks"))
             {
-                while (await reader.ReadAsync(cancellationToken))
+                foreach (var waitingTask in waitingTasks)
                 {
-                    /* session_id and blocking_session_id are smallint in sys.dm_os_waiting_tasks */
-                    var sessionId = reader.IsDBNull(0) ? 0 : reader.GetInt16(0);
-                    var waitType = reader.IsDBNull(1) ? null : reader.GetString(1);
-                    var waitDurationMs = reader.IsDBNull(2) ? 0L : reader.GetInt64(2);
-                    var blockingSessionId = reader.IsDBNull(3) ? (short?)null : reader.GetInt16(3);
-                    var databaseName = reader.IsDBNull(4) ? null : reader.GetString(4);
-
                     var row = appender.CreateRow();
                     row.AppendValue(GenerateCollectionId())
                        .AppendValue(collectionTime)
                        .AppendValue(serverId)
                        .AppendValue(GetServerNameForStorage(server))
-                       .AppendValue((int)sessionId)
-                       .AppendValue(waitType)
-                       .AppendValue(waitDurationMs)
-                       .AppendValue(blockingSessionId.HasValue ? (int?)blockingSessionId.Value : null)
-                       .AppendValue((string?)null) /* resource_description — no longer collected */
-                       .AppendValue(databaseName)
+                       .AppendValue(waitingTask.SessionId)
+                       .AppendValue(waitingTask.WaitType)
+                       .AppendValue(waitingTask.WaitDurationMs)
+                       .AppendValue(waitingTask.BlockingSessionId)
+                       .AppendValue(waitingTask.ResourceDescription)
+                       .AppendValue(waitingTask.DatabaseName)
                        .EndRow();
 
                     rowsCollected++;

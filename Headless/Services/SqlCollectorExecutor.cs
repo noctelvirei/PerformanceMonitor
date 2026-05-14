@@ -40,6 +40,8 @@ public sealed class SqlCollectorExecutor
         ServerPropertiesSnapshot? properties = null;
         IReadOnlyList<WaitStatSnapshot> waitStats = [];
         IReadOnlyList<CpuSample> cpuSamples = [];
+        IReadOnlyList<WaitingTaskSnapshot> waitingTasks = [];
+        IReadOnlyList<CollectorSampleSnapshot> collectorSamples = [];
 
         try
         {
@@ -86,10 +88,42 @@ public sealed class SqlCollectorExecutor
                     rowsCollected = cpuSamples.Count;
                     break;
 
+                case CollectorCatalog.WaitingTasks:
+                    sqlWatch.Start();
+                    var collectedWaitingTasks = await SqlServerCollectors.CollectWaitingTasksAsync(
+                        connection,
+                        commandTimeoutSeconds,
+                        [],
+                        cancellationToken);
+                    sqlWatch.Stop();
+                    waitingTasks = collectedWaitingTasks
+                        .Select(ToSnapshot)
+                        .ToList();
+                    rowsCollected = waitingTasks.Count;
+                    break;
+
                 default:
-                    status = "SKIPPED";
-                    errorMessage = $"Unknown collector '{collectorName}'";
-                    _logger.LogWarning("Unknown collector {Collector}", collectorName);
+                    if (SqlServerCollectors.TryGetRawCollectorDefinition(collectorName, out var rawDefinition))
+                    {
+                        sqlWatch.Start();
+                        var rawRows = await SqlServerCollectors.CollectRawRowsAsync(
+                            connection,
+                            commandTimeoutSeconds,
+                            rawDefinition,
+                            await BuildRawCollectorContextAsync(connection, commandTimeoutSeconds, cancellationToken),
+                            cancellationToken);
+                        sqlWatch.Stop();
+                        collectorSamples = rawRows
+                            .Select(row => new CollectorSampleSnapshot(collectorName, row.SampleKey, row.PayloadJson))
+                            .ToList();
+                        rowsCollected = collectorSamples.Count;
+                    }
+                    else
+                    {
+                        status = "SKIPPED";
+                        errorMessage = $"Unknown collector '{collectorName}'";
+                        _logger.LogWarning("Unknown collector {Collector}", collectorName);
+                    }
                     break;
             }
         }
@@ -118,6 +152,8 @@ public sealed class SqlCollectorExecutor
                 ServerProperties = properties,
                 WaitStats = waitStats,
                 CpuSamples = cpuSamples,
+                WaitingTasks = waitingTasks,
+                CollectorSamples = collectorSamples,
                 Logs =
                 [
                     new CollectionLogEntry(
@@ -159,4 +195,36 @@ public sealed class SqlCollectorExecutor
             sample.SampleTime,
             sample.SqlServerCpuUtilization,
             sample.OtherProcessCpuUtilization);
+
+    private static WaitingTaskSnapshot ToSnapshot(WaitingTaskTelemetry task)
+        => new(
+            task.SessionId,
+            task.WaitType,
+            task.WaitDurationMs,
+            task.BlockingSessionId,
+            task.ResourceDescription,
+            task.DatabaseName);
+
+    private static async Task<SqlRawCollectorContext> BuildRawCollectorContextAsync(
+        SqlConnection connection,
+        int commandTimeoutSeconds,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+SELECT
+    engine_edition = CONVERT(int, SERVERPROPERTY(N'EngineEdition')),
+    product_version = CONVERT(nvarchar(128), SERVERPROPERTY(N'ProductVersion'));
+""", connection);
+        command.CommandTimeout = Math.Max(1, commandTimeoutSeconds);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new SqlRawCollectorContext(null, null, []);
+        }
+
+        var engineEdition = reader.IsDBNull(0) ? null : (int?)reader.GetInt32(0);
+        var productVersion = reader.IsDBNull(1) ? "" : reader.GetString(1);
+        var majorVersion = int.TryParse(productVersion.Split('.')[0], out var parsed) ? parsed : (int?)null;
+        return new SqlRawCollectorContext(engineEdition, majorVersion, []);
+    }
 }

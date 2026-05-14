@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Options;
+using ModelContextProtocol.AspNetCore;
+using PerformanceMonitor.Headless.Mcp;
 using PerformanceMonitor.Headless.Models;
 using PerformanceMonitor.Headless.Services;
 using PerformanceMonitor.Headless.Storage;
@@ -14,10 +16,25 @@ builder.Services.AddSingleton<IHeadlessRepository>(serviceProvider => servicePro
 builder.Services.AddSingleton<IEstateTelemetryReader>(serviceProvider => serviceProvider.GetRequiredService<IHeadlessStore>());
 builder.Services.AddSingleton<MonitorSettingsService>();
 builder.Services.AddSingleton<MonitorSettingsConfigurationPersistence>();
+builder.Services.AddSingleton<SqlInstanceDiscoveryService>();
+builder.Services.AddSingleton<CentralToolService>();
+builder.Services.AddSingleton<McpAccessService>();
 builder.Services.AddSingleton<CollectionSnapshotIntakeService>();
 builder.Services.AddSingleton<CollectionRunScheduler>();
 builder.Services.AddSingleton<SqlCollectorExecutor>();
 builder.Services.AddHostedService<SqlEstateCollectorService>();
+builder.Services
+    .AddMcpServer(options =>
+    {
+        options.ServerInfo = new()
+        {
+            Name = "PerformanceMonitorCentralRepository",
+            Version = "2.10.0"
+        };
+        options.ServerInstructions = CentralMcpInstructions.Text;
+    })
+    .WithHttpTransport()
+    .WithTools<CentralMcpTools>();
 
 var app = builder.Build();
 
@@ -67,6 +84,15 @@ app.MapPost("/api/settings/test-repository", async (
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 });
 
+app.MapPost("/api/settings/discover-servers", async (
+    SqlInstanceDiscoveryRequest request,
+    SqlInstanceDiscoveryService discovery,
+    CancellationToken cancellationToken) =>
+{
+    var result = await discovery.DiscoverAsync(request, cancellationToken);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+});
+
 app.MapGet("/api/collection-log", async (IEstateTelemetryReader reader, int? limit, CancellationToken cancellationToken)
     => Results.Ok(await reader.GetCollectionLogAsync(limit ?? 200, cancellationToken)));
 
@@ -89,6 +115,39 @@ app.MapGet("/api/servers/{serverId}/cpu", async (
 {
     var rows = await reader.GetCpuSamplesAsync(serverId, hours ?? 1, cancellationToken);
     return Results.Ok(rows);
+});
+
+app.MapGet("/api/servers/{serverId}/waiting-tasks", async (
+    string serverId,
+    IEstateTelemetryReader reader,
+    int? hours,
+    int? limit,
+    CancellationToken cancellationToken) =>
+{
+    var rows = await reader.GetWaitingTasksAsync(serverId, hours ?? 1, limit ?? 50, cancellationToken);
+    return Results.Ok(rows);
+});
+
+app.MapGet("/api/servers/{serverId}/collectors/{collectorName}/samples", async (
+    string serverId,
+    string collectorName,
+    IEstateTelemetryReader reader,
+    int? hours,
+    int? limit,
+    CancellationToken cancellationToken) =>
+{
+    var rows = await reader.GetCollectorSamplesAsync(serverId, collectorName, hours ?? 1, limit ?? 100, cancellationToken);
+    return Results.Ok(rows);
+});
+
+app.MapGet("/api/servers/{serverId}/experience", async (
+    string serverId,
+    IEstateTelemetryReader reader,
+    int? hours,
+    CancellationToken cancellationToken) =>
+{
+    var experience = await reader.GetServerExperienceAsync(serverId, hours ?? 1, cancellationToken);
+    return Results.Ok(experience);
 });
 
 app.MapPost("/api/ingest/snapshot", async (
@@ -117,6 +176,22 @@ app.MapPost("/api/ingest/snapshot", async (
 
     return Results.Ok(await intake.AcceptRemoteAsync(request, cancellationToken));
 });
+
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/mcp"))
+    {
+        var access = context.RequestServices.GetRequiredService<McpAccessService>();
+        if (!await access.AuthorizeMcpRequestAsync(context))
+        {
+            return;
+        }
+    }
+
+    await next();
+});
+
+app.MapMcp("/mcp");
 
 app.MapFallbackToFile("index.html");
 

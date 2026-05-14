@@ -14,11 +14,13 @@ internal static class MonitorSettingsMapper
             ArchiveDirectory = monitor.ArchiveDirectory,
             Repository = ToRepositoryDto(monitor.Repository),
             IngestApiKey = monitor.IngestApiKey,
+            McpAccess = ToMcpAccessDto(monitor.McpAccess),
             CollectionIntervalSeconds = monitor.CollectionIntervalSeconds,
             MaxConcurrentServers = monitor.MaxConcurrentServers,
             CommandTimeoutSeconds = monitor.CommandTimeoutSeconds,
             ArchiveIntervalMinutes = monitor.ArchiveIntervalMinutes,
             HotDataDays = monitor.HotDataDays,
+            AlertRules = ToAlertRuleDto(monitor.AlertRules),
             Collectors = monitor.GetEffectiveCollectors()
                 .Select(c => new CollectorScheduleOptions
                 {
@@ -43,11 +45,13 @@ internal static class MonitorSettingsMapper
             settings.ArchiveDirectory,
             ToRepositoryOption(settings.Repository, currentOptions.Repository),
             settings.IngestApiKey,
+            ToMcpAccessOption(settings.McpAccess, currentOptions.McpAccess),
             settings.CollectionIntervalSeconds,
             settings.MaxConcurrentServers,
             settings.CommandTimeoutSeconds,
             settings.ArchiveIntervalMinutes,
             settings.HotDataDays,
+            ToAlertRuleOptions(settings.AlertRules),
             settings.Collectors
                 .Where(c => !string.IsNullOrWhiteSpace(c.Name))
                 .Select(ToCollectorOption)
@@ -118,6 +122,20 @@ internal static class MonitorSettingsMapper
         settings.CommandTimeoutSeconds = Math.Clamp(settings.CommandTimeoutSeconds, 1, 600);
         settings.ArchiveIntervalMinutes = Math.Clamp(settings.ArchiveIntervalMinutes, 0, 10080);
         settings.HotDataDays = Math.Clamp(settings.HotDataDays, 0, 3650);
+        settings.AlertRules ??= new AlertRuleSettingsDto();
+        settings.McpAccess ??= new McpAccessSettingsDto();
+        settings.McpAccess.AuthMode = NormalizeMcpAuthMode(settings.McpAccess.AuthMode);
+        settings.McpAccess.PublicBaseUrl = settings.McpAccess.PublicBaseUrl?.Trim() ?? "";
+        settings.AlertRules.CpuWarningThreshold = Math.Clamp(settings.AlertRules.CpuWarningThreshold, 1, 100);
+        settings.AlertRules.CpuCriticalThreshold = Math.Clamp(settings.AlertRules.CpuCriticalThreshold, settings.AlertRules.CpuWarningThreshold, 100);
+        settings.AlertRules.LongRunningQueryWarningMinutes = Math.Clamp(settings.AlertRules.LongRunningQueryWarningMinutes, 1, 1440);
+        settings.AlertRules.LongRunningQueryCriticalMinutes = Math.Clamp(settings.AlertRules.LongRunningQueryCriticalMinutes, settings.AlertRules.LongRunningQueryWarningMinutes, 1440);
+        settings.AlertRules.MemoryGrantWarningSeconds = Math.Clamp(settings.AlertRules.MemoryGrantWarningSeconds, 1, 3600);
+        settings.AlertRules.MemoryGrantCriticalSeconds = Math.Clamp(settings.AlertRules.MemoryGrantCriticalSeconds, settings.AlertRules.MemoryGrantWarningSeconds, 3600);
+        settings.AlertRules.FileLatencyWarningMs = Math.Clamp(settings.AlertRules.FileLatencyWarningMs, 1, 60000);
+        settings.AlertRules.FileLatencyCriticalMs = Math.Clamp(settings.AlertRules.FileLatencyCriticalMs, settings.AlertRules.FileLatencyWarningMs, 60000);
+        settings.AlertRules.LongRunningJobWarningMinutes = Math.Clamp(settings.AlertRules.LongRunningJobWarningMinutes, 1, 10080);
+        settings.AlertRules.LongRunningJobCriticalMinutes = Math.Clamp(settings.AlertRules.LongRunningJobCriticalMinutes, settings.AlertRules.LongRunningJobWarningMinutes, 10080);
 
         foreach (var server in settings.Servers)
         {
@@ -163,6 +181,82 @@ internal static class MonitorSettingsMapper
             ConnectionStringEnvironmentVariable = repository.ConnectionStringEnvironmentVariable
         };
 
+    private static McpAccessSettingsDto ToMcpAccessDto(McpAccessOptions mcpAccess)
+        => new()
+        {
+            Enabled = mcpAccess.Enabled,
+            AuthMode = NormalizeMcpAuthMode(mcpAccess.AuthMode),
+            PublicBaseUrl = mcpAccess.PublicBaseUrl,
+            HasApiKey = !string.IsNullOrWhiteSpace(mcpAccess.ProtectedApiKey),
+            AllowLocalWithoutApiKey = mcpAccess.AllowLocalWithoutApiKey
+        };
+
+    private static McpAccessOptions ToMcpAccessOption(McpAccessSettingsDto? mcpAccess, McpAccessOptions? existing)
+    {
+        mcpAccess ??= new McpAccessSettingsDto();
+        var protectedApiKey = string.IsNullOrWhiteSpace(mcpAccess.ApiKey)
+            ? existing?.ProtectedApiKey
+            : LocalSecretProtector.Protect(mcpAccess.ApiKey);
+
+        return new McpAccessOptions
+        {
+            Enabled = mcpAccess.Enabled,
+            AuthMode = NormalizeMcpAuthMode(mcpAccess.AuthMode),
+            PublicBaseUrl = mcpAccess.PublicBaseUrl?.Trim().TrimEnd('/') ?? "",
+            ProtectedApiKey = protectedApiKey,
+            AllowLocalWithoutApiKey = mcpAccess.AllowLocalWithoutApiKey
+        };
+    }
+
+    private static AlertRuleSettingsDto ToAlertRuleDto(AlertRuleOptions alertRules)
+        => new()
+        {
+            Enabled = alertRules.Enabled,
+            CpuEnabled = alertRules.CpuEnabled,
+            CpuWarningThreshold = alertRules.CpuWarningThreshold,
+            CpuCriticalThreshold = alertRules.CpuCriticalThreshold,
+            LongRunningQueryEnabled = alertRules.LongRunningQueryEnabled,
+            LongRunningQueryWarningMinutes = alertRules.LongRunningQueryWarningMinutes,
+            LongRunningQueryCriticalMinutes = alertRules.LongRunningQueryCriticalMinutes,
+            BlockingEnabled = alertRules.BlockingEnabled,
+            DeadlockEnabled = alertRules.DeadlockEnabled,
+            MemoryGrantEnabled = alertRules.MemoryGrantEnabled,
+            MemoryGrantWarningSeconds = alertRules.MemoryGrantWarningSeconds,
+            MemoryGrantCriticalSeconds = alertRules.MemoryGrantCriticalSeconds,
+            FileLatencyEnabled = alertRules.FileLatencyEnabled,
+            FileLatencyWarningMs = alertRules.FileLatencyWarningMs,
+            FileLatencyCriticalMs = alertRules.FileLatencyCriticalMs,
+            LongRunningJobEnabled = alertRules.LongRunningJobEnabled,
+            LongRunningJobWarningMinutes = alertRules.LongRunningJobWarningMinutes,
+            LongRunningJobCriticalMinutes = alertRules.LongRunningJobCriticalMinutes
+        };
+
+    private static AlertRuleOptions ToAlertRuleOptions(AlertRuleSettingsDto? alertRules)
+    {
+        alertRules ??= new AlertRuleSettingsDto();
+        return new AlertRuleOptions
+        {
+            Enabled = alertRules.Enabled,
+            CpuEnabled = alertRules.CpuEnabled,
+            CpuWarningThreshold = alertRules.CpuWarningThreshold,
+            CpuCriticalThreshold = alertRules.CpuCriticalThreshold,
+            LongRunningQueryEnabled = alertRules.LongRunningQueryEnabled,
+            LongRunningQueryWarningMinutes = alertRules.LongRunningQueryWarningMinutes,
+            LongRunningQueryCriticalMinutes = alertRules.LongRunningQueryCriticalMinutes,
+            BlockingEnabled = alertRules.BlockingEnabled,
+            DeadlockEnabled = alertRules.DeadlockEnabled,
+            MemoryGrantEnabled = alertRules.MemoryGrantEnabled,
+            MemoryGrantWarningSeconds = alertRules.MemoryGrantWarningSeconds,
+            MemoryGrantCriticalSeconds = alertRules.MemoryGrantCriticalSeconds,
+            FileLatencyEnabled = alertRules.FileLatencyEnabled,
+            FileLatencyWarningMs = alertRules.FileLatencyWarningMs,
+            FileLatencyCriticalMs = alertRules.FileLatencyCriticalMs,
+            LongRunningJobEnabled = alertRules.LongRunningJobEnabled,
+            LongRunningJobWarningMinutes = alertRules.LongRunningJobWarningMinutes,
+            LongRunningJobCriticalMinutes = alertRules.LongRunningJobCriticalMinutes
+        };
+    }
+
     private static string InferConnectionMode(MonitoredServerOptions server)
     {
         if (!string.IsNullOrWhiteSpace(server.ConnectionStringEnvironmentVariable))
@@ -192,6 +286,11 @@ internal static class MonitorSettingsMapper
 
         return string.IsNullOrWhiteSpace(repository.UserId) ? "Windows" : "Sql";
     }
+
+    private static string NormalizeMcpAuthMode(string? authMode)
+        => string.Equals(authMode, "BearerToken", StringComparison.OrdinalIgnoreCase)
+            ? "BearerToken"
+            : "None";
 
     private static CollectorScheduleOptions ToCollectorOption(CollectorScheduleOptions collector)
         => new()

@@ -8,7 +8,8 @@ async function fetchJson(url, options = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.message || `${response.status} ${response.statusText}`);
   }
 
   return response.json();
@@ -27,8 +28,22 @@ export function createHeadlessApi() {
       const id = encodeURIComponent(serverId);
       return Promise.all([
         fetchJson(`/api/servers/${id}/waits?hours=1&limit=12`),
-        fetchJson(`/api/servers/${id}/cpu?hours=1`)
-      ]).then(([waits, cpu]) => ({ waits, cpu }));
+        fetchJson(`/api/servers/${id}/cpu?hours=1`),
+        fetchJson(`/api/servers/${id}/waiting-tasks?hours=1&limit=50`)
+      ]).then(([waits, cpu, waitingTasks]) => ({ waits, cpu, waitingTasks }));
+    },
+
+    loadCollectorGroup(serverId, collectorNames, hours = 1, limit = 50) {
+      const id = encodeURIComponent(serverId);
+      return Promise.all(collectorNames.map(name =>
+        fetchJson(`/api/servers/${id}/collectors/${encodeURIComponent(name)}/samples?hours=${hours}&limit=${limit}`)
+          .then(rows => [name, rows])
+      )).then(entries => Object.fromEntries(entries));
+    },
+
+    loadServerExperience(serverId, hours = 1) {
+      const id = encodeURIComponent(serverId);
+      return fetchJson(`/api/servers/${id}/experience?hours=${hours}`);
     },
 
     getSettings() {
@@ -55,6 +70,14 @@ export function createHeadlessApi() {
 
     testRepository(repository) {
       return postTest("/api/settings/test-repository", { repository });
+    },
+
+    discoverServers(request) {
+      return fetchJson("/api/settings/discover-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request)
+      });
     }
   };
 }

@@ -92,6 +92,8 @@ END
 
         await InsertWaitStatsAsync(snapshot.Server, snapshot.CollectionTime, snapshot.WaitStats, cancellationToken);
         await InsertCpuSamplesAsync(snapshot.Server, snapshot.CollectionTime, snapshot.CpuSamples, cancellationToken);
+        await InsertWaitingTasksAsync(snapshot.Server, snapshot.CollectionTime, snapshot.WaitingTasks, cancellationToken);
+        await InsertCollectorSamplesAsync(snapshot.Server, snapshot.CollectionTime, snapshot.CollectorSamples, cancellationToken);
         storageWatch.Stop();
 
         foreach (var log in snapshot.Logs)
@@ -299,6 +301,49 @@ VALUES
         }
     }
 
+    public async Task InsertWaitingTasksAsync(
+        CollectionServerIdentity server,
+        DateTime collectionTime,
+        IReadOnlyList<WaitingTaskSnapshot> rows,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken);
+            foreach (var row in rows)
+            {
+                await using var command = new SqlCommand("""
+INSERT dbo.waiting_tasks
+    (collection_id, collection_time, server_id, server_name, session_id, wait_type, wait_duration_ms, blocking_session_id, resource_description, database_name)
+VALUES
+    (@collection_id, @collection_time, @server_id, @server_name, @session_id, @wait_type, @wait_duration_ms, @blocking_session_id, @resource_description, @database_name);
+""", connection);
+                command.Parameters.AddWithValue("@collection_id", NextId());
+                command.Parameters.AddWithValue("@collection_time", collectionTime);
+                command.Parameters.AddWithValue("@server_id", server.Id);
+                command.Parameters.AddWithValue("@server_name", server.ServerNameForStorage);
+                command.Parameters.AddWithValue("@session_id", row.SessionId);
+                command.Parameters.AddWithValue("@wait_type", row.WaitType ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue("@wait_duration_ms", row.WaitDurationMs);
+                command.Parameters.AddWithValue("@blocking_session_id", (object?)row.BlockingSessionId ?? DBNull.Value);
+                command.Parameters.AddWithValue("@resource_description", row.ResourceDescription ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue("@database_name", row.DatabaseName ?? (object)DBNull.Value);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     public async Task InsertCollectionLogAsync(
         CollectionServerIdentity server,
         string collectorName,
@@ -341,9 +386,53 @@ VALUES
         }
     }
 
+    public async Task InsertCollectorSamplesAsync(
+        CollectionServerIdentity server,
+        DateTime collectionTime,
+        IReadOnlyList<CollectorSampleSnapshot> rows,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken);
+            foreach (var row in rows)
+            {
+                await using var command = new SqlCommand("""
+INSERT dbo.collector_samples
+    (collection_id, collection_time, server_id, server_name, collector_name, sample_key, payload_json)
+VALUES
+    (@collection_id, @collection_time, @server_id, @server_name, @collector_name, @sample_key, @payload_json);
+""", connection);
+                command.Parameters.AddWithValue("@collection_id", NextId());
+                command.Parameters.AddWithValue("@collection_time", collectionTime);
+                command.Parameters.AddWithValue("@server_id", server.Id);
+                command.Parameters.AddWithValue("@server_name", server.ServerNameForStorage);
+                command.Parameters.AddWithValue("@collector_name", row.CollectorName);
+                command.Parameters.AddWithValue("@sample_key", row.SampleKey ?? (object)DBNull.Value);
+                command.Parameters.AddWithValue("@payload_json", row.PayloadJson);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<ServerHealthDto>> GetServersAsync(CancellationToken cancellationToken)
     {
         var servers = new List<ServerHealthDto>();
+        var activeAlertsByServer = (await GetActiveOperationalAlertsAsync(cancellationToken))
+            .GroupBy(alert => alert.ServerId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
@@ -434,6 +523,8 @@ ORDER BY
         while (await reader.ReadAsync(cancellationToken))
         {
             var serverId = reader.GetString(0);
+            activeAlertsByServer.TryGetValue(serverId, out var activeAlerts);
+            var primaryAlert = GetPrimaryAlert(activeAlerts ?? []);
             servers.Add(EstateTelemetryQueryProjection.ToServerHealth(new EstateServerTelemetryRow(
                 serverId,
                 reader.IsDBNull(1) ? serverId : reader.GetString(1),
@@ -445,9 +536,9 @@ ORDER BY
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
                 reader.IsDBNull(9) ? null : reader.GetInt32(9),
-                reader.IsDBNull(10) ? 0 : Convert.ToInt32(reader.GetValue(10)),
-                reader.IsDBNull(11) ? null : reader.GetString(11),
-                reader.IsDBNull(12) ? null : reader.GetString(12),
+                activeAlerts?.Count ?? 0,
+                primaryAlert?.Message,
+                primaryAlert?.Severity,
                 reader.IsDBNull(13) ? null : reader.GetInt32(13),
                 reader.IsDBNull(14) ? null : reader.GetString(14)),
                 _options.CurrentValue.CollectionIntervalSeconds,
@@ -463,7 +554,7 @@ ORDER BY
         var servers = await GetServersAsync(cancellationToken);
         return EstateTelemetryQueryProjection.ToSummary(
             servers,
-            await GetActiveCollectorAlertsAsync(cancellationToken),
+            await GetActiveOperationalAlertsAsync(cancellationToken),
             generatedAt);
     }
 
@@ -473,8 +564,18 @@ ORDER BY
         var servers = await GetServersAsync(cancellationToken);
         return EstateTelemetryQueryProjection.ToEstateActiveAlerts(
             servers,
-            await GetActiveCollectorAlertsAsync(cancellationToken),
+            await GetActiveOperationalAlertsAsync(cancellationToken),
             generatedAt);
+    }
+
+    private async Task<IReadOnlyList<ActiveAlertDto>> GetActiveOperationalAlertsAsync(CancellationToken cancellationToken)
+    {
+        var alerts = new List<ActiveAlertDto>();
+        alerts.AddRange(await GetActiveCollectorAlertsAsync(cancellationToken));
+        alerts.AddRange(await GetActiveCpuAlertsAsync(cancellationToken));
+        alerts.AddRange(await GetActiveWaitingTaskAlertsAsync(cancellationToken));
+        alerts.AddRange(await GetActiveCollectorSampleAlertsAsync(cancellationToken));
+        return alerts;
     }
 
     private async Task<IReadOnlyList<ActiveAlertDto>> GetActiveCollectorAlertsAsync(CancellationToken cancellationToken)
@@ -527,6 +628,181 @@ ORDER BY
         }
 
         return alerts;
+    }
+
+    private async Task<IReadOnlyList<ActiveAlertDto>> GetActiveCpuAlertsAsync(CancellationToken cancellationToken)
+    {
+        var rules = _options.CurrentValue.AlertRules;
+        if (!rules.Enabled || !rules.CpuEnabled)
+        {
+            return [];
+        }
+
+        var alerts = new List<ActiveAlertDto>();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+WITH latest_cpu AS
+(
+    SELECT server_id, sample_time = MAX(sample_time)
+    FROM dbo.cpu_utilization_stats
+    GROUP BY server_id
+)
+SELECT
+    cu.sample_time,
+    cu.server_id,
+    COALESCE(NULLIF(s.display_name, N''), cu.server_name) AS server_name,
+    cu.sqlserver_cpu_utilization
+FROM dbo.cpu_utilization_stats AS cu
+JOIN latest_cpu AS latest
+  ON latest.server_id = cu.server_id
+ AND latest.sample_time = cu.sample_time
+LEFT JOIN dbo.servers AS s
+  ON s.server_id = cu.server_id
+WHERE cu.sample_time >= @since
+AND   COALESCE(s.is_enabled, CONVERT(bit, 1)) = CONVERT(bit, 1)
+AND   cu.sqlserver_cpu_utilization >= @warning_threshold;
+""", connection);
+        command.Parameters.AddWithValue("@since", DateTime.UtcNow.AddSeconds(-Math.Max(900, _options.CurrentValue.CollectionIntervalSeconds * 3)));
+        command.Parameters.AddWithValue("@warning_threshold", rules.CpuWarningThreshold);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var cpu = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+            alerts.Add(new ActiveAlertDto(
+                reader.GetDateTime(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                "CPU",
+                cpu >= rules.CpuCriticalThreshold ? "red" : "yellow",
+                $"SQL CPU is {cpu:n0}%",
+                "cpu"));
+        }
+
+        return alerts;
+    }
+
+    private async Task<IReadOnlyList<ActiveAlertDto>> GetActiveWaitingTaskAlertsAsync(CancellationToken cancellationToken)
+    {
+        if (!_options.CurrentValue.AlertRules.Enabled || !_options.CurrentValue.AlertRules.BlockingEnabled)
+        {
+            return [];
+        }
+
+        var alerts = new List<ActiveAlertDto>();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+WITH latest_waiting_task_collection AS
+(
+    SELECT server_id, collection_time
+    FROM
+    (
+        SELECT
+            server_id,
+            collection_time,
+            status,
+            ROW_NUMBER() OVER (PARTITION BY server_id ORDER BY collection_time DESC, log_id DESC) AS rn
+        FROM dbo.collection_log
+        WHERE collector_name = N'waiting_tasks'
+    ) AS latest
+    WHERE rn = 1
+    AND   status = N'SUCCESS'
+)
+SELECT
+    wt.collection_time,
+    wt.server_id,
+    COALESCE(NULLIF(s.display_name, N''), wt.server_name) AS server_name,
+    wt.session_id,
+    wt.blocking_session_id,
+    wt.wait_type,
+    wt.wait_duration_ms
+FROM dbo.waiting_tasks AS wt
+JOIN latest_waiting_task_collection AS latest
+  ON latest.server_id = wt.server_id
+ AND latest.collection_time = wt.collection_time
+LEFT JOIN dbo.servers AS s
+  ON s.server_id = wt.server_id
+WHERE COALESCE(wt.blocking_session_id, 0) > 0
+AND   COALESCE(s.is_enabled, CONVERT(bit, 1)) = CONVERT(bit, 1)
+ORDER BY wt.wait_duration_ms DESC;
+""", connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var sessionId = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+            var blockingSessionId = reader.IsDBNull(4) ? 0 : reader.GetInt32(4);
+            var waitType = reader.IsDBNull(5) ? "wait" : reader.GetString(5);
+            var waitDurationMs = reader.IsDBNull(6) ? 0L : reader.GetInt64(6);
+
+            alerts.Add(new ActiveAlertDto(
+                reader.GetDateTime(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                "Waiting tasks",
+                "red",
+                $"Session {sessionId} blocked by {blockingSessionId} on {waitType} for {waitDurationMs:n0} ms",
+                "stats"));
+        }
+
+        return alerts;
+    }
+
+    private async Task<IReadOnlyList<ActiveAlertDto>> GetActiveCollectorSampleAlertsAsync(CancellationToken cancellationToken)
+    {
+        var samples = new List<CollectorSampleDto>();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+WITH latest_sample AS
+(
+    SELECT server_id, collector_name, collection_time = MAX(collection_time)
+    FROM dbo.collector_samples
+    WHERE collector_name IN (
+        N'perfmon_stats',
+        N'query_snapshots',
+        N'memory_grant_stats',
+        N'memory_pressure_events',
+        N'file_io_stats',
+        N'running_jobs',
+        N'database_config',
+        N'deadlocks',
+        N'blocked_process_report'
+    )
+    GROUP BY server_id, collector_name
+)
+SELECT
+    cs.collection_time,
+    cs.server_id,
+    COALESCE(NULLIF(s.display_name, N''), cs.server_name) AS server_name,
+    cs.collector_name,
+    cs.sample_key,
+    cs.payload_json
+FROM dbo.collector_samples AS cs
+JOIN latest_sample AS latest
+  ON latest.server_id = cs.server_id
+ AND latest.collector_name = cs.collector_name
+ AND latest.collection_time = cs.collection_time
+LEFT JOIN dbo.servers AS s
+  ON s.server_id = cs.server_id
+WHERE cs.collection_time >= @since
+AND   COALESCE(s.is_enabled, CONVERT(bit, 1)) = CONVERT(bit, 1)
+ORDER BY cs.collection_time DESC, cs.server_id, cs.collector_name;
+""", connection);
+        command.Parameters.AddWithValue("@since", DateTime.UtcNow.AddSeconds(-Math.Max(900, _options.CurrentValue.CollectionIntervalSeconds * 3)));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            samples.Add(new CollectorSampleDto(
+                reader.GetDateTime(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5)));
+        }
+
+        return CollectorExperienceProjection.ProjectActiveAlerts(samples, _options.CurrentValue.AlertRules);
     }
 
     public async Task<IReadOnlyList<CollectionLogDto>> GetCollectionLogAsync(int limit, CancellationToken cancellationToken)
@@ -622,6 +898,92 @@ ORDER BY sample_time;
         return samples;
     }
 
+    public async Task<IReadOnlyList<WaitingTaskDto>> GetWaitingTasksAsync(string serverId, int hoursBack, int limit, CancellationToken cancellationToken)
+    {
+        var tasks = new List<WaitingTaskDto>();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+SELECT TOP (@limit)
+    collection_time,
+    session_id,
+    wait_type,
+    wait_duration_ms,
+    blocking_session_id,
+    resource_description,
+    database_name
+FROM dbo.waiting_tasks
+WHERE server_id = @server_id
+AND   collection_time >= @since
+ORDER BY collection_time DESC, wait_duration_ms DESC;
+""", connection);
+        command.Parameters.AddWithValue("@server_id", serverId);
+        command.Parameters.AddWithValue("@since", DateTime.UtcNow.AddHours(-Math.Clamp(hoursBack, 1, 720)));
+        command.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 500));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            tasks.Add(new WaitingTaskDto(
+                reader.GetDateTime(0),
+                reader.IsDBNull(1) ? 0 : reader.GetInt32(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? 0L : reader.GetInt64(3),
+                reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6)));
+        }
+
+        return tasks;
+    }
+
+    public async Task<IReadOnlyList<CollectorSampleDto>> GetCollectorSamplesAsync(
+        string serverId,
+        string collectorName,
+        int hoursBack,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var samples = new List<CollectorSampleDto>();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+SELECT TOP (@limit) collection_time, server_id, server_name, collector_name, sample_key, payload_json
+FROM dbo.collector_samples
+WHERE server_id = @server_id
+AND collector_name = @collector_name
+AND collection_time >= @since
+ORDER BY collection_time DESC, sample_key;
+""", connection);
+        command.Parameters.AddWithValue("@server_id", serverId);
+        command.Parameters.AddWithValue("@collector_name", collectorName);
+        command.Parameters.AddWithValue("@since", DateTime.UtcNow.AddHours(-Math.Clamp(hoursBack, 1, 720)));
+        command.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 1000));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            samples.Add(new CollectorSampleDto(
+                reader.GetDateTime(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5)));
+        }
+
+        return samples;
+    }
+
+    public async Task<ServerExperienceDto> GetServerExperienceAsync(string serverId, int hoursBack, CancellationToken cancellationToken)
+    {
+        var samples = new List<CollectorSampleDto>();
+        foreach (var collectorName in CollectorExperienceProjection.ExperienceCollectorNames)
+        {
+            samples.AddRange(await GetCollectorSamplesAsync(serverId, collectorName, hoursBack, 250, cancellationToken));
+        }
+
+        return CollectorExperienceProjection.Project(serverId, samples, _options.CurrentValue.AlertRules);
+    }
+
     public async Task ArchiveOldDataAsync(CancellationToken cancellationToken)
     {
         if (_options.CurrentValue.HotDataDays <= 0)
@@ -640,6 +1002,8 @@ ORDER BY sample_time;
             {
                 ("dbo.wait_stats", "collection_time"),
                 ("dbo.cpu_utilization_stats", "sample_time"),
+                ("dbo.waiting_tasks", "collection_time"),
+                ("dbo.collector_samples", "collection_time"),
                 ("dbo.server_properties", "collection_time"),
                 ("dbo.collection_log", "collection_time")
             })
@@ -672,6 +1036,12 @@ ORDER BY sample_time;
 
         return new SqlConnection(connectionString);
     }
+
+    private static ActiveAlertDto? GetPrimaryAlert(IReadOnlyList<ActiveAlertDto> alerts)
+        => alerts
+            .OrderBy(static alert => alert.Severity.Equals("red", StringComparison.OrdinalIgnoreCase) ? 1 : 2)
+            .ThenByDescending(static alert => alert.RaisedAt)
+            .FirstOrDefault();
 
     private static void AddServerParameters(SqlCommand command, CollectionServerIdentity server)
     {
@@ -779,11 +1149,46 @@ ORDER BY sample_time;
             );
         END
         """,
+        """
+        IF OBJECT_ID(N'dbo.waiting_tasks', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.waiting_tasks
+            (
+                collection_id bigint NOT NULL CONSTRAINT PK_waiting_tasks PRIMARY KEY,
+                collection_time datetime2(7) NOT NULL,
+                server_id nvarchar(128) NOT NULL,
+                server_name nvarchar(256) NOT NULL,
+                session_id int NULL,
+                wait_type nvarchar(128) NULL,
+                wait_duration_ms bigint NULL,
+                blocking_session_id int NULL,
+                resource_description nvarchar(3072) NULL,
+                database_name nvarchar(256) NULL
+            );
+        END
+        """,
+        """
+        IF OBJECT_ID(N'dbo.collector_samples', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.collector_samples
+            (
+                collection_id bigint NOT NULL CONSTRAINT PK_collector_samples PRIMARY KEY,
+                collection_time datetime2(7) NOT NULL,
+                server_id nvarchar(128) NOT NULL,
+                server_name nvarchar(256) NOT NULL,
+                collector_name nvarchar(128) NOT NULL,
+                sample_key nvarchar(512) NULL,
+                payload_json nvarchar(max) NOT NULL
+            );
+        END
+        """,
         "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_servers_status' AND object_id = OBJECT_ID(N'dbo.servers')) CREATE INDEX IX_servers_status ON dbo.servers(is_enabled, last_status);",
         "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_collection_log_time' AND object_id = OBJECT_ID(N'dbo.collection_log')) CREATE INDEX IX_collection_log_time ON dbo.collection_log(collection_time);",
         "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_collection_log_server_collector_time' AND object_id = OBJECT_ID(N'dbo.collection_log')) CREATE INDEX IX_collection_log_server_collector_time ON dbo.collection_log(server_id, collector_name, collection_time);",
         "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_wait_stats_time' AND object_id = OBJECT_ID(N'dbo.wait_stats')) CREATE INDEX IX_wait_stats_time ON dbo.wait_stats(server_id, collection_time);",
         "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_cpu_time' AND object_id = OBJECT_ID(N'dbo.cpu_utilization_stats')) CREATE INDEX IX_cpu_time ON dbo.cpu_utilization_stats(server_id, sample_time);",
+        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_waiting_tasks_time' AND object_id = OBJECT_ID(N'dbo.waiting_tasks')) CREATE INDEX IX_waiting_tasks_time ON dbo.waiting_tasks(server_id, collection_time);",
+        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_collector_samples_lookup' AND object_id = OBJECT_ID(N'dbo.collector_samples')) CREATE INDEX IX_collector_samples_lookup ON dbo.collector_samples(server_id, collector_name, collection_time);",
         "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_server_properties_time' AND object_id = OBJECT_ID(N'dbo.server_properties')) CREATE INDEX IX_server_properties_time ON dbo.server_properties(server_id, collection_time);"
     ];
 }

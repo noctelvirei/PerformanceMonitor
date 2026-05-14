@@ -33,10 +33,22 @@ export function createServerDetailView(els) {
 
       if (activeTab === "stats") {
         renderWaits(els.waitList, detail.waits || []);
+        renderWaitingTasks(els.waitingTaskList, detail.waitingTasks || []);
       }
 
       if (activeTab === "cpu") {
         drawCpuChart(els.cpuCanvas, detail.cpu || []);
+      }
+
+      if (["queries", "resources", "memory", "jobs", "config"].includes(activeTab)) {
+        const collectorContainer = document.querySelector(`#tab-${activeTab} .collector-sample-list`);
+        if (collectorContainer) {
+          if (detail.experience) {
+            renderExperienceArea(collectorContainer, detail.experience, activeTab);
+          } else {
+            renderCollectorSamples(collectorContainer, detail.collectorSamples || {});
+          }
+        }
       }
     }
   };
@@ -95,6 +107,178 @@ function renderWaits(container, waits) {
     `;
     container.appendChild(row);
   }
+}
+
+function renderWaitingTasks(container, tasks) {
+  container.innerHTML = "";
+  if (!tasks.length) {
+    container.innerHTML = `<div class="empty-state">No active waits.</div>`;
+    return;
+  }
+
+  for (const task of tasks) {
+    const row = document.createElement("div");
+    const blocked = Number(task.blockingSessionId || 0) > 0;
+    row.className = `waiting-task-row ${blocked ? "blocked" : ""}`;
+    row.innerHTML = `
+      <strong>${escapeHtml(task.waitType || "wait")}</strong>
+      <span>Session ${task.sessionId ?? "--"}${blocked ? ` blocked by ${task.blockingSessionId}` : ""}</span>
+      <span>${escapeHtml(task.databaseName || "")}</span>
+      <b>${formatMs(task.waitDurationMs || 0)}</b>
+    `;
+    container.appendChild(row);
+  }
+}
+
+function renderCollectorSamples(container, sampleGroups) {
+  container.innerHTML = "";
+  const entries = Object.entries(sampleGroups);
+  if (!entries.length) {
+    container.innerHTML = `<div class="empty-state">No collector samples.</div>`;
+    return;
+  }
+
+  for (const [collectorName, rows] of entries) {
+    const panel = document.createElement("article");
+    panel.className = "panel collector-sample-panel";
+    panel.innerHTML = `
+      <div class="panel-header">
+        <h2>${escapeHtml(formatCollectorName(collectorName))}</h2>
+        <span>${rows.length} rows</span>
+      </div>
+      <div class="collector-sample-table"></div>
+    `;
+
+    const tableHost = panel.querySelector(".collector-sample-table");
+    if (!rows.length) {
+      tableHost.innerHTML = `<div class="empty-state">No recent data.</div>`;
+    } else {
+      renderSampleTable(tableHost, rows);
+    }
+    container.appendChild(panel);
+  }
+}
+
+function renderExperienceArea(container, experience, activeTab) {
+  container.innerHTML = "";
+  const panels = experience?.[activeTab] || [];
+  if (!panels.length) {
+    container.innerHTML = `<div class="empty-state">No recent data.</div>`;
+    return;
+  }
+
+  for (const panel of panels) {
+    const article = document.createElement("article");
+    article.className = `panel experience-panel severity-${panel.severity || "green"}`;
+    article.innerHTML = `
+      <div class="panel-header">
+        <h2>${escapeHtml(panel.title)}</h2>
+        <span>${escapeHtml(panel.summary || "")}</span>
+      </div>
+      <div class="experience-metrics">
+        ${(panel.metrics || []).map(renderExperienceMetric).join("")}
+      </div>
+      <div class="experience-rows"></div>
+    `;
+
+    const rowsHost = article.querySelector(".experience-rows");
+    const rows = panel.rows || [];
+    if (!rows.length) {
+      rowsHost.innerHTML = `<div class="empty-state">No row detail.</div>`;
+    } else {
+      for (const row of rows) {
+        rowsHost.appendChild(renderExperienceRow(row));
+      }
+    }
+
+    container.appendChild(article);
+  }
+}
+
+function renderExperienceMetric(metric) {
+  const severity = metric.severity || "green";
+  return `
+    <span class="experience-metric severity-${escapeHtml(severity)}">
+      <small>${escapeHtml(metric.label)}</small>
+      <strong title="${escapeHtml(metric.value)}">${escapeHtml(metric.value)}</strong>
+    </span>
+  `;
+}
+
+function renderExperienceRow(row) {
+  const element = document.createElement("div");
+  const severity = row.severity || "green";
+  element.className = `experience-row severity-${severity}`;
+  element.innerHTML = `
+    <div class="experience-row-main">
+      <strong title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</strong>
+      <span title="${escapeHtml(row.description || "")}">${escapeHtml(row.description || "")}</span>
+    </div>
+    <div class="experience-row-metrics">
+      ${(row.metrics || []).map(renderExperienceMetric).join("")}
+    </div>
+  `;
+  return element;
+}
+
+function renderSampleTable(container, rows) {
+  const parsedRows = rows.map(row => ({
+    collectionTime: row.collectionTime,
+    values: safeParseJson(row.payloadJson)
+  }));
+  const columns = pickColumns(parsedRows);
+  const table = document.createElement("table");
+  table.className = "sample-table";
+  table.innerHTML = `
+    <thead><tr><th>Collected</th>${columns.map(column => `<th>${escapeHtml(formatCollectorName(column))}</th>`).join("")}</tr></thead>
+    <tbody></tbody>
+  `;
+  const body = table.querySelector("tbody");
+  for (const row of parsedRows.slice(0, 50)) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${formatTime(row.collectionTime)}</td>${columns.map(column => `<td title="${escapeHtml(formatCell(row.values[column]))}">${escapeHtml(formatCell(row.values[column]))}</td>`).join("")}`;
+    body.appendChild(tr);
+  }
+  container.appendChild(table);
+}
+
+function pickColumns(rows) {
+  const priority = [
+    "database_name", "session_id", "wait_type", "query_hash", "procedure_name",
+    "counter_name", "cntr_value", "file_name", "size_mb", "memory_mb",
+    "total_elapsed_time_ms", "total_worker_time_ms", "job_name", "state_desc",
+    "name", "value_in_use"
+  ];
+  const keys = [...new Set(rows.flatMap(row => Object.keys(row.values)))];
+  return keys
+    .sort((left, right) => priorityIndex(left, priority) - priorityIndex(right, priority))
+    .slice(0, 7);
+}
+
+function priorityIndex(key, priority) {
+  const index = priority.indexOf(key);
+  return index === -1 ? priority.length + key.localeCompare("zzzz") : index;
+}
+
+function safeParseJson(json) {
+  try {
+    return JSON.parse(json || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function formatCell(value) {
+  if (value == null || value === "") return "--";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  const text = String(value);
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+}
+
+function formatCollectorName(name) {
+  return String(name || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function drawCpuChart(canvas, samples) {

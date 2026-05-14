@@ -3,7 +3,7 @@ using Microsoft.Data.SqlClient;
 
 namespace PerformanceMonitor.Collectors;
 
-public static class SqlServerCollectors
+public static partial class SqlServerCollectors
 {
     public static async Task<ServerPropertiesTelemetry> CollectServerPropertiesAsync(
         SqlConnection connection,
@@ -170,6 +170,54 @@ OPTION(RECOMPILE);
         return rows;
     }
 
+    public static async Task<IReadOnlyList<WaitingTaskTelemetry>> CollectWaitingTasksAsync(
+        SqlConnection connection,
+        int commandTimeoutSeconds,
+        IEnumerable<string>? excludedDatabases,
+        CancellationToken cancellationToken)
+    {
+        var excludedDatabaseNames = excludedDatabases?
+            .Where(static databaseName => !string.IsNullOrWhiteSpace(databaseName))
+            .Select(static databaseName => databaseName.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
+        var exclusionClause = "";
+        if (excludedDatabaseNames.Count > 0)
+        {
+            exclusionClause = "AND   d.name NOT IN (" +
+                string.Join(", ", excludedDatabaseNames.Select(static (_, index) => $"@excluded_database_{index}")) +
+                ")";
+        }
+
+        var query = WaitingTasksQuery.Replace("/*EXCLUSION_FILTER*/", exclusionClause);
+        var rows = new List<WaitingTaskTelemetry>();
+        await using var command = new SqlCommand(query, connection);
+        command.CommandTimeout = Math.Max(1, commandTimeoutSeconds);
+
+        for (var i = 0; i < excludedDatabaseNames.Count; i++)
+        {
+            command.Parameters.Add(new SqlParameter($"@excluded_database_{i}", SqlDbType.NVarChar, 128)
+            {
+                Value = excludedDatabaseNames[i]
+            });
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(new WaitingTaskTelemetry(
+                reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetValue(0)),
+                reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.IsDBNull(2) ? 0L : reader.GetInt64(2),
+                reader.IsDBNull(3) ? null : Convert.ToInt32(reader.GetValue(3)),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+
+        return rows;
+    }
+
     public static int? ParseVCoreFromServiceObjective(string serviceObjective)
     {
         var parts = serviceObjective.Split('_');
@@ -262,4 +310,27 @@ OPTION(RECOMPILE);
 
     private static int ParseMajorVersion(string productVersion)
         => int.TryParse(productVersion.Split('.')[0], out var majorVersion) ? majorVersion : 0;
+
+    private const string WaitingTasksQuery = """
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+SELECT /* PerformanceMonitor */
+    session_id = wt.session_id,
+    wait_type = wt.wait_type,
+    wait_duration_ms = wt.wait_duration_ms,
+    blocking_session_id = wt.blocking_session_id,
+    resource_description = CONVERT(nvarchar(3072), NULL),
+    database_name = d.name
+FROM sys.dm_os_waiting_tasks AS wt
+LEFT JOIN sys.dm_exec_requests AS er
+  ON er.session_id = wt.session_id
+LEFT JOIN sys.databases AS d
+  ON d.database_id = er.database_id
+WHERE wt.session_id >= 50
+AND   wt.session_id <> @@SPID
+AND   wt.wait_type IS NOT NULL
+AND   er.database_id <> ISNULL(DB_ID(N'PerformanceMonitor'), 0)
+/*EXCLUSION_FILTER*/
+OPTION(RECOMPILE);
+""";
 }

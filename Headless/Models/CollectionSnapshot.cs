@@ -9,6 +9,8 @@ public sealed record CollectionSnapshot
     public ServerPropertiesSnapshot? ServerProperties { get; init; }
     public IReadOnlyList<WaitStatSnapshot> WaitStats { get; init; } = [];
     public IReadOnlyList<CpuSample> CpuSamples { get; init; } = [];
+    public IReadOnlyList<WaitingTaskSnapshot> WaitingTasks { get; init; } = [];
+    public IReadOnlyList<CollectorSampleSnapshot> CollectorSamples { get; init; } = [];
     public IReadOnlyList<CollectionLogEntry> Logs { get; init; } = [];
 }
 
@@ -41,3 +43,8 @@ public sealed record CollectionLogEntry(
     int RowsCollected,
     long SqlDurationMs,
     long StorageDurationMs);
+
+public sealed record CollectorSampleSnapshot(
+    string CollectorName,
+    string? SampleKey,
+    string PayloadJson);

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$ServiceName = "PerformanceMonitorHeadless",
-    [string]$DisplayName = "Performance Monitor Headless",
+    [string]$DisplayName = "Performance Monitor Central Repository",
     [string]$Url = "http://localhost:5155",
     [switch]$PromptForServiceAccount,
     [System.Management.Automation.PSCredential]$Credential,
@@ -26,7 +26,7 @@ if (-not (Test-IsAdministrator)) {
 }
 
 if ($PromptForServiceAccount -and -not $Credential) {
-    $Credential = Get-Credential -Message "Account to run the Performance Monitor Headless service"
+    $Credential = Get-Credential -Message "Account to run the Performance Monitor Central Repository service"
 }
 
 $packageRoot = Split-Path -Parent $PSCommandPath

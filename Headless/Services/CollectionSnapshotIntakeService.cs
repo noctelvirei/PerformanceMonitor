@@ -22,6 +22,8 @@ public sealed class CollectionSnapshotIntakeService
             snapshot.ServerProperties is null ? 0 : 1,
             snapshot.WaitStats.Count,
             snapshot.CpuSamples.Count,
+            snapshot.WaitingTasks.Count,
+            snapshot.CollectorSamples.Count,
             snapshot.Logs.Count);
     }
 
@@ -45,6 +47,8 @@ public sealed class CollectionSnapshotIntakeService
             ServerProperties = request.ServerProperties,
             WaitStats = request.WaitStats,
             CpuSamples = request.CpuSamples,
+            WaitingTasks = request.WaitingTasks,
+            CollectorSamples = request.CollectorSamples,
             Logs = request.CollectionLog
                 .Select(log => new CollectionLogEntry(
                     log.CollectorName,

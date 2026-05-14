@@ -48,6 +48,50 @@ public sealed record CpuSampleDto(
     int SqlServerCpuUtilization,
     int OtherProcessCpuUtilization);
 
+public sealed record WaitingTaskDto(
+    DateTime CollectionTime,
+    int SessionId,
+    string? WaitType,
+    long WaitDurationMs,
+    int? BlockingSessionId,
+    string? ResourceDescription,
+    string? DatabaseName);
+
+public sealed record CollectorSampleDto(
+    DateTime CollectionTime,
+    string ServerId,
+    string ServerName,
+    string CollectorName,
+    string? SampleKey,
+    string PayloadJson);
+
+public sealed record ServerExperienceDto(
+    IReadOnlyList<ExperiencePanelDto> Queries,
+    IReadOnlyList<ExperiencePanelDto> Resources,
+    IReadOnlyList<ExperiencePanelDto> Memory,
+    IReadOnlyList<ExperiencePanelDto> Jobs,
+    IReadOnlyList<ExperiencePanelDto> Config,
+    IReadOnlyList<ActiveAlertDto> Alerts);
+
+public sealed record ExperiencePanelDto(
+    string Area,
+    string Title,
+    string Severity,
+    string Summary,
+    IReadOnlyList<ExperienceMetricDto> Metrics,
+    IReadOnlyList<ExperienceRowDto> Rows);
+
+public sealed record ExperienceMetricDto(
+    string Label,
+    string Value,
+    string? Severity = null);
+
+public sealed record ExperienceRowDto(
+    string Label,
+    string? Description,
+    string Severity,
+    IReadOnlyList<ExperienceMetricDto> Metrics);
+
 public sealed record EstateSummaryDto(
     int ServerCount,
     int GreenCount,
@@ -75,6 +119,8 @@ public sealed class IngestSnapshotDto
     public ServerPropertiesSnapshot? ServerProperties { get; set; }
     public List<WaitStatSnapshot> WaitStats { get; set; } = [];
     public List<CpuSample> CpuSamples { get; set; } = [];
+    public List<WaitingTaskSnapshot> WaitingTasks { get; set; } = [];
+    public List<CollectorSampleSnapshot> CollectorSamples { get; set; } = [];
     public List<CollectionLogDto> CollectionLog { get; set; } = [];
 }
 
@@ -91,6 +137,8 @@ public sealed record IngestResultDto(
     int ServerPropertiesRows,
     int WaitRows,
     int CpuRows,
+    int WaitingTaskRows,
+    int CollectorSampleRows,
     int LogRows);
 
 public sealed record ServerPropertiesSnapshot(
@@ -115,3 +163,11 @@ public sealed record CpuSample(
     DateTime SampleTime,
     int SqlServerCpuUtilization,
     int OtherProcessCpuUtilization);
+
+public sealed record WaitingTaskSnapshot(
+    int SessionId,
+    string? WaitType,
+    long WaitDurationMs,
+    int? BlockingSessionId,
+    string? ResourceDescription,
+    string? DatabaseName);

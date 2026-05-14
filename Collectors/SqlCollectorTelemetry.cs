@@ -30,3 +30,11 @@ public sealed record CpuSampleTelemetry(
     DateTime SampleTime,
     int SqlServerCpuUtilization,
     int OtherProcessCpuUtilization);
+
+public sealed record WaitingTaskTelemetry(
+    int SessionId,
+    string? WaitType,
+    long WaitDurationMs,
+    int? BlockingSessionId,
+    string? ResourceDescription,
+    string? DatabaseName);

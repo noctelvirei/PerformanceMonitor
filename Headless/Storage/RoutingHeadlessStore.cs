@@ -52,6 +52,15 @@ public sealed class RoutingHeadlessStore : IHeadlessStore
     public Task<IReadOnlyList<CpuSampleDto>> GetCpuSamplesAsync(string serverId, int hoursBack, CancellationToken cancellationToken)
         => CurrentStore.GetCpuSamplesAsync(serverId, hoursBack, cancellationToken);
 
+    public Task<IReadOnlyList<WaitingTaskDto>> GetWaitingTasksAsync(string serverId, int hoursBack, int limit, CancellationToken cancellationToken)
+        => CurrentStore.GetWaitingTasksAsync(serverId, hoursBack, limit, cancellationToken);
+
+    public Task<IReadOnlyList<CollectorSampleDto>> GetCollectorSamplesAsync(string serverId, string collectorName, int hoursBack, int limit, CancellationToken cancellationToken)
+        => CurrentStore.GetCollectorSamplesAsync(serverId, collectorName, hoursBack, limit, cancellationToken);
+
+    public Task<ServerExperienceDto> GetServerExperienceAsync(string serverId, int hoursBack, CancellationToken cancellationToken)
+        => CurrentStore.GetServerExperienceAsync(serverId, hoursBack, cancellationToken);
+
     public Task ApplyRetentionAsync(CancellationToken cancellationToken)
         => CurrentStore.ApplyRetentionAsync(cancellationToken);
 

@@ -38,7 +38,7 @@ public sealed class SqlEstateCollectorService : BackgroundService
 
         var storage = _store.GetStorageInfo();
         _logger.LogInformation(
-            "Headless monitor started. Storage={Provider}; DuckDB={DuckDbPath}; SQL={SqlDataSource}/{SqlDatabase}",
+            "Central repository monitor started. Storage={Provider}; DuckDB={DuckDbPath}; SQL={SqlDataSource}/{SqlDatabase}",
             storage.Provider,
             storage.DuckDbPath,
             storage.SqlDataSource,

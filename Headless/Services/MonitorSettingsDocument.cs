@@ -44,11 +44,13 @@ internal sealed class MonitorSettingsDocument
         monitor["ArchiveDirectory"] = settings.ArchiveDirectory;
         monitor["Repository"] = ToRepositoryJson(settings.Repository);
         monitor["IngestApiKey"] = settings.IngestApiKey;
+        monitor["McpAccess"] = ToMcpAccessJson(settings.McpAccess);
         monitor["CollectionIntervalSeconds"] = settings.CollectionIntervalSeconds;
         monitor["MaxConcurrentServers"] = settings.MaxConcurrentServers;
         monitor["CommandTimeoutSeconds"] = settings.CommandTimeoutSeconds;
         monitor["ArchiveIntervalMinutes"] = settings.ArchiveIntervalMinutes;
         monitor["HotDataDays"] = settings.HotDataDays;
+        monitor["AlertRules"] = ToAlertRulesJson(settings.AlertRules);
         monitor["Collectors"] = ToCollectorsJson(settings.Collectors);
         monitor["Servers"] = ToServersJson(settings.Servers);
     }
@@ -80,6 +82,39 @@ internal sealed class MonitorSettingsDocument
             ["TrustServerCertificate"] = repository.TrustServerCertificate,
             ["ConnectionString"] = repository.ConnectionString,
             ["ConnectionStringEnvironmentVariable"] = repository.ConnectionStringEnvironmentVariable
+        };
+
+    private static JsonObject ToMcpAccessJson(McpAccessOptions mcpAccess)
+        => new()
+        {
+            ["Enabled"] = mcpAccess.Enabled,
+            ["AuthMode"] = mcpAccess.AuthMode,
+            ["PublicBaseUrl"] = mcpAccess.PublicBaseUrl,
+            ["ProtectedApiKey"] = mcpAccess.ProtectedApiKey,
+            ["AllowLocalWithoutApiKey"] = mcpAccess.AllowLocalWithoutApiKey
+        };
+
+    private static JsonObject ToAlertRulesJson(AlertRuleOptions alertRules)
+        => new()
+        {
+            ["Enabled"] = alertRules.Enabled,
+            ["CpuEnabled"] = alertRules.CpuEnabled,
+            ["CpuWarningThreshold"] = alertRules.CpuWarningThreshold,
+            ["CpuCriticalThreshold"] = alertRules.CpuCriticalThreshold,
+            ["LongRunningQueryEnabled"] = alertRules.LongRunningQueryEnabled,
+            ["LongRunningQueryWarningMinutes"] = alertRules.LongRunningQueryWarningMinutes,
+            ["LongRunningQueryCriticalMinutes"] = alertRules.LongRunningQueryCriticalMinutes,
+            ["BlockingEnabled"] = alertRules.BlockingEnabled,
+            ["DeadlockEnabled"] = alertRules.DeadlockEnabled,
+            ["MemoryGrantEnabled"] = alertRules.MemoryGrantEnabled,
+            ["MemoryGrantWarningSeconds"] = alertRules.MemoryGrantWarningSeconds,
+            ["MemoryGrantCriticalSeconds"] = alertRules.MemoryGrantCriticalSeconds,
+            ["FileLatencyEnabled"] = alertRules.FileLatencyEnabled,
+            ["FileLatencyWarningMs"] = alertRules.FileLatencyWarningMs,
+            ["FileLatencyCriticalMs"] = alertRules.FileLatencyCriticalMs,
+            ["LongRunningJobEnabled"] = alertRules.LongRunningJobEnabled,
+            ["LongRunningJobWarningMinutes"] = alertRules.LongRunningJobWarningMinutes,
+            ["LongRunningJobCriticalMinutes"] = alertRules.LongRunningJobCriticalMinutes
         };
 
     private static JsonArray ToCollectorsJson(IEnumerable<CollectorScheduleOptions> collectors)

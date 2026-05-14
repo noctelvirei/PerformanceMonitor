@@ -1,10 +1,10 @@
-# Headless Estate Monitor
+# Central Repository Estate Monitor
 
-The headless host is the central-server version of Performance Monitor. It runs on one monitoring server, connects remotely to SQL Server instances, stores results centrally, and serves the website from the same process.
+The central repository service is the central-server version of Performance Monitor. It runs on one monitoring server, connects remotely to SQL Server instances, stores results centrally, and serves the website from the same process. The project folder is still named `Headless`, but the product shape is a central repository and dashboard, not a no-UI collector.
 
-## Current Thin Slice
+## Current Central Service
 
-The first implementation includes:
+The central service includes:
 
 - central ASP.NET Core host
 - background collector loop
@@ -13,13 +13,34 @@ The first implementation includes:
 - DuckDB and Parquet storage on the monitoring server, or a central SQL Server repository
 - HTTP API
 - ingest API for child collectors to report to a parent dashboard
-- estate overview website with traffic-light server panels, collector log, CPU chart, and top waits
+- estate overview website with traffic-light server panels, alert rail, collector log, CPU chart, waits, query/resource/memory/job/config tabs
 - in-page alert toasts
 - optional browser notifications for red/yellow state changes
-- initial collectors:
+- central-service collectors:
   - `server_properties`
   - `wait_stats`
   - `cpu_utilization`
+  - `waiting_tasks`
+  - `query_stats`
+  - `procedure_stats`
+  - `query_store`
+  - `query_snapshots`
+  - `file_io_stats`
+  - `memory_stats`
+  - `memory_clerks`
+  - `memory_pressure_events`
+  - `tempdb_stats`
+  - `perfmon_stats`
+  - `memory_grant_stats`
+  - `session_stats`
+  - `server_config`
+  - `database_config`
+  - `database_scoped_config`
+  - `trace_flags`
+  - `running_jobs`
+  - `database_size_stats`
+  - `deadlocks`
+  - `blocked_process_report`
 
 It does not install SQL Agent jobs on monitored servers.
 
@@ -40,6 +61,10 @@ http://localhost:5155
 The browser Settings page is the preferred configuration path. Open the website and choose **Settings** to add servers, set the purpose group, choose Windows or SQL authentication, pick DuckDB or SQL Server repository storage, change collector schedules, and test connections.
 
 Settings are saved to the monitoring server's local `Headless\appsettings.json`, which is ignored by git. SQL passwords entered through Settings are protected with Windows DPAPI for the user or service account running the headless host.
+
+Alert thresholds are also configured in Settings. The central defaults are intentionally close to Lite's operator defaults: SQL CPU warning/critical, long-running query warning/critical, memory grant wait, file latency, long-running job, blocking, and deadlock rules all feed the overview traffic lights.
+
+The Settings page can discover SQL Server instances through dbatools' `Find-DbaInstance` command. Install dbatools for the same Windows account that runs the headless host, then use **Discovery** to scan named targets, Active Directory SQL SPNs, browser enumeration, or an IP range. Discovered instances are shown as candidates; choose **Add** to turn one into a normal monitored server entry.
 
 For a dozen or more dev boxes, a single central SQL repository is usually the cleanest shape. For larger estates, run one collector per estate boundary, such as Development, Staging, and Production, and have those collectors post to the parent dashboard API. The monitored SQL Servers still only need normal remote query permissions; they do not need local Performance Monitor databases or Agent jobs.
 
@@ -146,12 +171,46 @@ GET /api/settings
 PUT /api/settings
 POST /api/settings/test-connection
 POST /api/settings/test-repository
+POST /api/settings/discover-servers
 POST /api/ingest/snapshot
 GET /api/storage
 GET /api/collection-log?limit=200
 GET /api/servers/{serverId}/waits?hours=1&limit=20
 GET /api/servers/{serverId}/cpu?hours=1
+GET /api/servers/{serverId}/waiting-tasks?hours=1&limit=50
+GET /api/servers/{serverId}/experience?hours=1
+GET /api/servers/{serverId}/collectors/{collectorName}/samples?hours=1&limit=100
 ```
+
+## Central Tooling / MCP
+
+The central service also exposes a read-only MCP server over the same ASP.NET Core host. It reads through the central telemetry interface, so tools work the same whether storage is DuckDB or a central SQL Server repository.
+
+```text
+http://localhost:5155/mcp
+```
+
+The central tools use the same familiar names for data the central service now collects: `list_servers`, `get_server_summary`, `get_collection_health`, `get_alerts`, `get_wait_stats`, `get_waiting_tasks`, `get_cpu_utilization`, `get_top_queries_by_cpu`, `get_top_procedures_by_cpu`, `get_query_store_top`, `get_active_queries`, `get_memory_stats`, `get_memory_clerks`, `get_memory_grants`, `get_file_io_stats`, `get_tempdb_trend`, `get_perfmon_stats`, `get_session_stats`, `get_running_jobs`, `get_server_config`, `get_database_config`, `get_database_scoped_config`, `get_trace_flags`, `get_deadlocks`, `get_blocked_process_reports`, `get_database_sizes`, and `get_collector_samples`.
+
+These tools do not connect directly to monitored SQL Servers and do not execute arbitrary SQL. They return only data already gathered into the central repository.
+
+OpenAI, Codex, ChatGPT, Claude Code, and Anthropic API callers can all use the central MCP tools, but the MCP server itself is model-less. The model, subscription, API key, or user-account sign-in belongs to the client that is calling `/mcp`.
+
+Configure **MCP Endpoint** in Settings:
+
+- `Trusted Network`: no MCP auth, intended only for isolated internal testing.
+- `API Key`: accepts `Authorization: Bearer <token>` or `X-PerformanceMonitor-MCP-Key: <token>`. This is just endpoint access for PerformanceMonitor, not OpenAI or Anthropic model sign-in.
+
+For a server install, use HTTPS for the public base URL and prefer API-key access unless the endpoint is genuinely isolated.
+
+Typical connection paths:
+
+- Codex: sign in to Codex on your laptop, then add the monitor's MCP server URL from that laptop. The Settings page shows the URL and a copyable `codex mcp add performance-monitor --url ...` command.
+- ChatGPT / Claude Code: sign in inside those clients and add the monitor's MCP server URL there. PerformanceMonitor does not sign in to the model provider for them.
+- OpenAI Responses API: authenticate to OpenAI as usual, configure an MCP tool with the monitor `server_url`, and include an `authorization` value only when this monitor requires one.
+- Anthropic Messages API: authenticate to Anthropic as usual, configure `mcp_servers[].url`, and include `authorization_token` only when this monitor requires one.
+
+If the dashboard later hosts its own embedded assistant, that is a separate feature from exposing `/mcp`. In that mode the monitoring server would become a model caller and would need provider credentials or per-user provider sessions of its own.
 
 ## Traffic Lights And Alerts
 
@@ -164,7 +223,24 @@ The overview cards are intended to work like an estate traffic-light board:
 
 The browser page raises an in-page toast when a server enters red or yellow. If browser notifications are enabled with the button in the header, the same state change also raises a native browser notification.
 
-For the current thin slice, "alert-worthy" means connection failures or collector statuses where the latest run for that server/collector is `ERROR` or `PERMISSIONS`. A later successful collector run clears that alert automatically, so the server panel colour returns to the next-worst current state instead of holding onto stale failures. As more collectors are ported, SQL performance alerts should feed the same red/yellow state so the panel color changes whenever something needs checking.
+Alert-worthy means connection failures, collector statuses where the latest run for that server/collector is `ERROR` or `PERMISSIONS`, currently blocked sessions from the latest `waiting_tasks` snapshot, and red/yellow conditions projected from the latest central collector samples. Current sample-based rules include blocked process counters, pending memory grants, recent memory pressure, high file latency, long-running SQL Agent jobs, recent deadlock or blocked process events, non-online databases, and AUTO_CLOSE/AUTO_SHRINK database settings. A later successful collector run with a clean latest snapshot clears the relevant alert automatically, so the server panel colour returns to the next-worst current state instead of holding onto stale failures.
+
+## Full Parity Map
+
+Central service mode should grow by reusing existing Full/Lite code, not by copying UI-specific logic into a second implementation.
+
+| Area | Full/Lite source | Central service status | Reuse path |
+| --- | --- | --- | --- |
+| Server metadata, waits, CPU | Shared `Collectors` project | Available | Already extracted and called by Lite and Headless |
+| Waiting tasks/blocking snapshot | Lite `RemoteCollectorService.WaitingTasks` | Available | SQL collection moved into shared `Collectors`; Lite and Headless call it |
+| Memory stats, clerks, pressure | Lite `RemoteCollectorService.Memory` | Available as central experience panels and samples | Shared `Collectors` row definitions feed central storage, alert projection, API, and web tabs |
+| Query stats, procedure stats, active requests, Query Store | Lite remote collectors and Full `DatabaseService.QueryPerformance` | Available as central experience panels and samples | Shared `Collectors` row definitions feed central storage, API, and web tabs |
+| File I/O, tempdb, perfmon, sessions | Lite remote collectors and Full resource metrics services | Available as central experience panels and samples | Shared `Collectors` row definitions feed central storage, alert projection, API, and web tabs |
+| Deadlocks and blocked process reports | Lite remote collectors and Full blocking/deadlock services | Available when target permissions/XE sources exist | Reads system_health and available blocked-process XE ring buffers centrally |
+| SQL Agent jobs and database size | Lite remote collectors | Available as central experience panels and samples | SQL Agent data is naturally permission-dependent because `msdb` access varies by estate |
+| Full MCP toolset | `Dashboard\Mcp` and `Lite\Mcp` | Core central tools available | Central MCP tools read through `IEstateTelemetryReader`; deeper plan analysis and inference graph parity still need extraction into shared services |
+| Full SQL Agent/install repository mode | `install\*.sql`, `Installer.Core`, Dashboard `DatabaseService` | Supported only as central storage today | If using a Full repository, call existing procs/views instead of reimplementing them |
+| SQL instance discovery | dbatools `Find-DbaInstance` | Available in Settings | Calls dbatools from the monitoring server and imports selected candidates |
 
 ## Storage
 
@@ -182,7 +258,7 @@ D:\gitbhub\PerformanceMonitor\Headless\data\headless\parquet
 
 Archival runs in-process. Rows older than `HotDataDays` are copied to Parquet and deleted from the hot DuckDB tables.
 
-SQL Server repository storage can be selected in **Settings**. Point it at one parent SQL database, or use one repository per environment if that better matches the estate. The headless service creates its repository tables on first use.
+SQL Server repository storage can be selected in **Settings**. Point it at one parent SQL database, or use one repository per environment if that better matches the estate. The central repository service creates its repository tables on first use.
 
 The ingest API is disabled until `Ingest API Key` is set in **Settings**. Child collectors should send that key as:
 
@@ -192,14 +268,4 @@ X-PerformanceMonitor-Key: <key>
 
 ## Where This Goes Next
 
-The next ports should come from Lite's existing remote collectors:
-
-- query stats
-- query store
-- file I/O
-- memory stats
-- blocking/deadlocks
-- database size/capacity
-- running SQL Agent jobs as optional `msdb` read telemetry
-
-The website should then grow from a status console into the Redgate-style estate overview: traffic lights, stale data warnings, top pain by server, recent regressions, blocking hotspots, and capacity risk.
+The remaining parity work is now less about whether the central service can collect the Full/Lite families and more about first-class presentation and tooling: typed read models for each collector family, richer web screens, MCP bindings over the central API, and deeper Full repository interop where an existing Erik-style repository already exists.

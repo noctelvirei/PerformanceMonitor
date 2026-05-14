@@ -9,10 +9,12 @@ internal sealed record MonitorSettingsDocumentState(
     string ArchiveDirectory,
     RepositoryOptions Repository,
     string? IngestApiKey,
+    McpAccessOptions McpAccess,
     int CollectionIntervalSeconds,
     int MaxConcurrentServers,
     int CommandTimeoutSeconds,
     int ArchiveIntervalMinutes,
     int HotDataDays,
+    AlertRuleOptions AlertRules,
     IReadOnlyList<CollectorScheduleOptions> Collectors,
     IReadOnlyList<MonitoredServerOptions> Servers);

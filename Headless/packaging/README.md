@@ -1,4 +1,4 @@
-# Performance Monitor Headless Package
+# Performance Monitor Central Repository Package
 
 This package installs the central estate monitor on the monitoring machine. It does not install SQL Agent jobs on monitored SQL Servers.
 

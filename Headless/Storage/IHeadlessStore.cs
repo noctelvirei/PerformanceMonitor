@@ -20,6 +20,9 @@ public interface IEstateTelemetryReader
     Task<IReadOnlyList<CollectionLogDto>> GetCollectionLogAsync(int limit, CancellationToken cancellationToken);
     Task<IReadOnlyList<TopWaitDto>> GetTopWaitsAsync(string serverId, int hoursBack, int limit, CancellationToken cancellationToken);
     Task<IReadOnlyList<CpuSampleDto>> GetCpuSamplesAsync(string serverId, int hoursBack, CancellationToken cancellationToken);
+    Task<IReadOnlyList<WaitingTaskDto>> GetWaitingTasksAsync(string serverId, int hoursBack, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<CollectorSampleDto>> GetCollectorSamplesAsync(string serverId, string collectorName, int hoursBack, int limit, CancellationToken cancellationToken);
+    Task<ServerExperienceDto> GetServerExperienceAsync(string serverId, int hoursBack, CancellationToken cancellationToken);
 }
 
 public interface IHeadlessStore : IHeadlessRepository, IEstateTelemetryReader;
