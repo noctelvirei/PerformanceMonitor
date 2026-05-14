@@ -53,7 +53,7 @@ public sealed class SqlInstanceDiscoveryService
         void Report(string message) => progress?.Invoke(message);
 
         var timeoutSeconds = Math.Clamp(request.TimeoutSeconds, 10, 900);
-        Report($"Preparing discovery scan with a {timeoutSeconds} second timeout.");
+        Report($"Preparing discovery scan with a {timeoutSeconds} second per-phase timeout.");
 
         try
         {
@@ -79,10 +79,7 @@ public sealed class SqlInstanceDiscoveryService
             }
 
             var tcpPorts = ParseTcpPorts(request.TcpPorts);
-            var plan = DescribePlan(targets, discoveryTypes, scanTypes, ipAddresses, tcpPorts, request.DomainController);
-            Report($"Scan plan: {plan}");
-
-            var jsonRequest = JsonSerializer.Serialize(new DbatoolsDiscoveryInput(
+            var phases = BuildDiscoveryPhases(
                 targets,
                 discoveryTypes,
                 scanTypes,
@@ -90,15 +87,56 @@ public sealed class SqlInstanceDiscoveryService
                 tcpPorts,
                 request.DomainController?.Trim() ?? "",
                 string.IsNullOrWhiteSpace(request.MinimumConfidence) ? "Medium" : request.MinimumConfidence.Trim(),
-                string.IsNullOrWhiteSpace(request.Purpose) ? "Development" : request.Purpose.Trim()),
-                s_jsonOptions);
-            var output = await RunDbatoolsDiscoveryAsync(jsonRequest, timeoutSeconds, plan, Report, cancellationToken);
+                string.IsNullOrWhiteSpace(request.Purpose) ? "Development" : request.Purpose.Trim());
+            Report($"Scan plan: {phases.Count} phase(s). Timeout is per phase, not for the whole scan.");
+
+            var outputs = new List<string>();
+            var phaseProblems = new List<string>();
+            for (var index = 0; index < phases.Count; index++)
+            {
+                var phase = phases[index];
+                Report($"Phase {index + 1}/{phases.Count}: {phase.Name}.");
+                try
+                {
+                    var output = await RunDbatoolsDiscoveryAsync(phase, timeoutSeconds, Report, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(output))
+                    {
+                        outputs.Add(output);
+                    }
+                }
+                catch (TimeoutException ex)
+                {
+                    phaseProblems.Add(ex.Message);
+                    Report(ex.Message);
+                }
+                catch (InvalidOperationException ex) when (!IsFatalDiscoveryError(ex))
+                {
+                    var phaseFailure = $"Phase {index + 1}/{phases.Count} failed: {phase.Name}. {ex.Message}";
+                    phaseProblems.Add(phaseFailure);
+                    Report(phaseFailure);
+                }
+            }
+
+            if (outputs.Count == 0 && phaseProblems.Count > 0)
+            {
+                return new SqlInstanceDiscoveryResponse(
+                    false,
+                    $"Discovery did not complete any phase. Last issue: {phaseProblems[^1]}",
+                    []);
+            }
+
             Report("Parsing dbatools discovery output.");
-            var rows = ParseDbatoolsOutput(output, request.Purpose);
+            var rows = ParseDbatoolsOutput(outputs, request.Purpose);
             Report(rows.Count == 0 ? "dbatools completed; no SQL Server instances matched." : $"dbatools completed; found {rows.Count} SQL Server instance(s).");
+            var message = rows.Count == 0 ? "No SQL Server instances found." : $"Found {rows.Count} SQL Server instance(s).";
+            if (phaseProblems.Count > 0)
+            {
+                message = $"{message} {phaseProblems.Count} phase(s) failed or timed out; see the discovery log for the exact phase.";
+            }
+
             return new SqlInstanceDiscoveryResponse(
                 true,
-                rows.Count == 0 ? "No SQL Server instances found." : $"Found {rows.Count} SQL Server instance(s).",
+                message,
                 rows);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -145,9 +183,8 @@ public sealed class SqlInstanceDiscoveryService
     }
 
     private async Task<string> RunDbatoolsDiscoveryAsync(
-        string jsonRequest,
+        DiscoveryPhase phase,
         int timeoutSeconds,
-        string plan,
         Action<string> progress,
         CancellationToken cancellationToken)
     {
@@ -163,7 +200,7 @@ $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
 
 if (-not (Get-Module -ListAvailable -Name dbatools)) {
-    throw 'dbatools is not installed for the service account. Install it with: Install-Module dbatools -Scope CurrentUser'
+    throw 'dbatools is not installed for the account running this service. Install it on the monitoring server for that account, or install it for all users with: Install-Module dbatools -Scope AllUsers'
 }
 
 Import-Module dbatools -ErrorAction Stop
@@ -206,6 +243,7 @@ Find-DbaInstance @params |
     ConvertTo-Json -Depth 4 -Compress
 """;
 
+        var jsonRequest = JsonSerializer.Serialize(phase.Input, s_jsonOptions);
         var encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         var startInfo = new ProcessStartInfo
         {
@@ -223,7 +261,7 @@ Find-DbaInstance @params |
         startInfo.Environment["TEMP"] = tempDirectory;
         startInfo.Environment["TMP"] = tempDirectory;
 
-        progress($"Starting Find-DbaInstance. Waiting on: {plan}");
+        progress($"Starting Find-DbaInstance for {phase.Name}. Parameters: {phase.Plan}");
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not start PowerShell for SQL Server discovery.");
         var processStartTime = DateTime.UtcNow;
@@ -255,7 +293,7 @@ Find-DbaInstance @params |
                     process.Kill(entireProcessTree: true);
                 }
 
-                throw new TimeoutException($"Discovery timed out after {timeoutSeconds} seconds while waiting for dbatools Find-DbaInstance. Last wait: {plan}");
+                throw new TimeoutException($"Phase timed out after {timeoutSeconds} seconds: {phase.Name}. Parameters: {phase.Plan}");
             }
 
             var pollDelay = TimeSpan.FromSeconds(Math.Min(5, Math.Max(1, timeoutSeconds - elapsed.TotalSeconds)));
@@ -266,7 +304,7 @@ Find-DbaInstance @params |
             }
 
             elapsed = DateTime.UtcNow - processStartTime;
-            progress($"Still waiting for Find-DbaInstance after {elapsed.TotalSeconds:n0}s of {timeoutSeconds}s. Waiting on: {plan}");
+            progress($"Still waiting after {elapsed.TotalSeconds:n0}s of {timeoutSeconds}s for {phase.Name}. Parameters: {phase.Plan}");
         }
 
         await waitTask;
@@ -279,13 +317,13 @@ Find-DbaInstance @params |
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "dbatools discovery failed." : error.Trim());
         }
 
-        progress("Find-DbaInstance finished; collecting returned candidates.");
+        progress($"Find-DbaInstance finished for {phase.Name}; collecting returned candidates.");
         return output;
     }
 
-    private List<SqlInstanceDiscoveryResult> ParseDbatoolsOutput(string output, string purpose)
+    private List<SqlInstanceDiscoveryResult> ParseDbatoolsOutput(IReadOnlyList<string> outputs, string purpose)
     {
-        if (string.IsNullOrWhiteSpace(output))
+        if (outputs.Count == 0)
         {
             return [];
         }
@@ -296,10 +334,19 @@ Find-DbaInstance @params |
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var discoveredPurpose = string.IsNullOrWhiteSpace(purpose) ? "Development" : purpose.Trim();
-        var rows = JsonSerializer.Deserialize<JsonElement>(output, s_jsonOptions);
-        var elements = rows.ValueKind == JsonValueKind.Array
-            ? rows.EnumerateArray().ToList()
-            : [rows];
+        var elements = new List<JsonElement>();
+        foreach (var output in outputs.Where(static output => !string.IsNullOrWhiteSpace(output)))
+        {
+            var rows = JsonSerializer.Deserialize<JsonElement>(output, s_jsonOptions);
+            if (rows.ValueKind == JsonValueKind.Array)
+            {
+                elements.AddRange(rows.EnumerateArray());
+            }
+            else
+            {
+                elements.Add(rows);
+            }
+        }
 
         return elements
             .Select(element => ToDiscoveryResult(element, discoveredPurpose, configured))
@@ -409,6 +456,112 @@ Find-DbaInstance @params |
         return ports.Distinct().ToArray();
     }
 
+    private static List<DiscoveryPhase> BuildDiscoveryPhases(
+        string[] targets,
+        string[] discoveryTypes,
+        string[] scanTypes,
+        string[] ipAddresses,
+        int[] tcpPorts,
+        string domainController,
+        string minimumConfidence,
+        string purpose)
+    {
+        var phases = new List<DiscoveryPhase>();
+        var scanVariants = BuildScanVariants(scanTypes, tcpPorts);
+
+        if (targets.Length > 0)
+        {
+            foreach (var target in targets)
+            {
+                foreach (var scan in scanVariants)
+                {
+                    var input = new DbatoolsDiscoveryInput(
+                        [target],
+                        [],
+                        scan.ScanTypes,
+                        [],
+                        scan.TcpPorts,
+                        domainController,
+                        minimumConfidence,
+                        purpose);
+                    phases.Add(new DiscoveryPhase($"target {target} / {scan.Name}", DescribePlan(input), input));
+                }
+            }
+
+            return phases;
+        }
+
+        foreach (var discoveryType in discoveryTypes.Where(static type => !string.Equals(type, "IPRange", StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var scan in scanVariants)
+            {
+                var input = new DbatoolsDiscoveryInput(
+                    [],
+                    [discoveryType],
+                    scan.ScanTypes,
+                    [],
+                    scan.TcpPorts,
+                    domainController,
+                    minimumConfidence,
+                    purpose);
+                phases.Add(new DiscoveryPhase($"discovery {discoveryType} / {scan.Name}", DescribePlan(input), input));
+            }
+        }
+
+        foreach (var ipAddress in ipAddresses)
+        {
+            foreach (var scan in scanVariants)
+            {
+                var input = new DbatoolsDiscoveryInput(
+                    [],
+                    ["IPRange"],
+                    scan.ScanTypes,
+                    [ipAddress],
+                    scan.TcpPorts,
+                    domainController,
+                    minimumConfidence,
+                    purpose);
+                phases.Add(new DiscoveryPhase($"IP range {ipAddress} / {scan.Name}", DescribePlan(input), input));
+            }
+        }
+
+        if (phases.Count == 0)
+        {
+            foreach (var scan in scanVariants)
+            {
+                var input = new DbatoolsDiscoveryInput(
+                    [],
+                    discoveryTypes,
+                    scan.ScanTypes,
+                    [],
+                    scan.TcpPorts,
+                    domainController,
+                    minimumConfidence,
+                    purpose);
+                phases.Add(new DiscoveryPhase($"discovery {FormatList(discoveryTypes, "default")} / {scan.Name}", DescribePlan(input), input));
+            }
+        }
+
+        return phases;
+    }
+
+    private static List<ScanVariant> BuildScanVariants(string[] scanTypes, int[] tcpPorts)
+    {
+        var variants = new List<ScanVariant>();
+        foreach (var scanType in scanTypes)
+        {
+            if (string.Equals(scanType, "TCPPort", StringComparison.OrdinalIgnoreCase) && tcpPorts.Length > 0)
+            {
+                variants.AddRange(tcpPorts.Select(port => new ScanVariant($"TCPPort {port}", [scanType], [port])));
+                continue;
+            }
+
+            variants.Add(new ScanVariant(scanType, [scanType], []));
+        }
+
+        return variants.Count == 0 ? [new ScanVariant("Browser", ["Browser"], [])] : variants;
+    }
+
     private static string DescribePlan(
         string[] targets,
         string[] discoveryTypes,
@@ -434,8 +587,16 @@ Find-DbaInstance @params |
         return string.Join("; ", parts);
     }
 
+    private static string DescribePlan(DbatoolsDiscoveryInput input)
+        => DescribePlan(input.Targets, input.DiscoveryTypes, input.ScanTypes, input.IpAddresses, input.TcpPorts, input.DomainController);
+
     private static string FormatList(string[] values, string emptyValue)
         => values.Length == 0 ? emptyValue : string.Join(",", values);
+
+    private static bool IsFatalDiscoveryError(InvalidOperationException exception)
+        => exception.Message.Contains("dbatools is not installed", StringComparison.OrdinalIgnoreCase)
+            || exception.Message.Contains("PowerShell was not found", StringComparison.OrdinalIgnoreCase)
+            || exception.Message.Contains("Could not start PowerShell", StringComparison.OrdinalIgnoreCase);
 
     private void TrimCompletedJobs()
     {
@@ -490,6 +651,10 @@ Find-DbaInstance @params |
         string DomainController,
         string MinimumConfidence,
         string Purpose);
+
+    private sealed record DiscoveryPhase(string Name, string Plan, DbatoolsDiscoveryInput Input);
+
+    private sealed record ScanVariant(string Name, string[] ScanTypes, int[] TcpPorts);
 
     private sealed class DiscoveryJobState
     {

@@ -334,10 +334,10 @@
 
               <article id="settings-discovery" class="panel settings-section" data-settings-section role="tabpanel" aria-labelledby="settings-discovery-tab" hidden>
                 <div class="panel-header">
-                  <div>
-                    <h2>Discovery</h2>
-                    <p>Uses dbatools to find candidate SQL instances, then lets you choose which ones to monitor.</p>
-                  </div>
+                <div>
+                  <h2>Discovery</h2>
+                  <p>Runs dbatools Find-DbaInstance from this monitoring server. It discovers candidates only; SQL login is tested after you add a server.</p>
+                </div>
                   <button id="discover-servers-button" type="button">Scan</button>
                 </div>
                 <div class="settings-grid">
@@ -364,7 +364,7 @@
                   <label>Domain Controller<input name="discoveryDomainController" type="text"></label>
                   <label>Confidence<select name="discoveryMinimumConfidence"><option value="Medium">Medium</option><option value="High">High</option><option value="Low">Low</option></select></label>
                   <label>Purpose<input name="discoveryPurpose" type="text" value="Development"></label>
-                  <label>Timeout Seconds<input name="discoveryTimeoutSeconds" type="number" min="10" value="120"></label>
+                  <label>Timeout Per Phase<input name="discoveryTimeoutSeconds" type="number" min="10" value="120"><span class="field-help">Applies to each discovery phase, not the whole scan. Missing dbatools fails during preflight.</span></label>
                 </div>
                 <div id="discovery-status" class="settings-card-status"></div>
                 <div id="discovery-results" class="settings-list compact"></div>
