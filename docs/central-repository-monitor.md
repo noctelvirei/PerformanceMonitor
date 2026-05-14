@@ -72,7 +72,8 @@ Discovery input rules:
 
 - `Targets`: known computer names or SQL hosts. When this is filled in, discovery scans those targets directly.
 - `IP Ranges`: use dbatools-supported IP range syntax such as `10.1.164.0/24` or `10.1.164.1-10.1.164.254`. A bare `10.1.164.0` means that one address only.
-- `Discovery Type`: leave as `DomainSPN,DataSourceEnumeration` for domain/browser discovery. The service adds `IPRange` automatically when IP ranges are supplied.
+- `Discovery Type`: leave as `DomainSPN,DataSourceEnumeration` for domain/browser discovery. If `IP Ranges` is filled in with the default discovery type, the service scopes the scan to `IPRange` instead of starting a broad domain phase first.
+- `Domain Controller`: required when using unscoped `DomainSPN`, `Domain`, or `DomainServer` discovery without `Targets` or `IP Ranges`. This prevents the page from sitting on a broad AD/browser phase when the missing scope should be fixed in Settings.
 
 For a dozen or more dev boxes, a single central SQL repository is usually the cleanest shape. For larger estates, run one collector per estate boundary, such as Development, Staging, and Production, and have those collectors post to the parent dashboard API. The monitored SQL Servers still only need normal remote query permissions; they do not need local Performance Monitor databases or Agent jobs.
 

@@ -57,7 +57,8 @@ public sealed class SqlInstanceDiscoveryService
 
         try
         {
-            var discoveryTypes = SplitList(request.DiscoveryTypes);
+            var requestedDiscoveryTypes = SplitList(request.DiscoveryTypes);
+            var discoveryTypes = requestedDiscoveryTypes;
             if (discoveryTypes.Length == 0)
             {
                 discoveryTypes = ["DomainSPN", "DataSourceEnumeration"];
@@ -71,14 +72,19 @@ public sealed class SqlInstanceDiscoveryService
 
             var targets = SplitList(request.Targets);
             var ipAddresses = SplitList(request.IpAddresses);
-            if (targets.Length == 0
-                && ipAddresses.Length > 0
-                && !discoveryTypes.Contains("IPRange", StringComparer.OrdinalIgnoreCase))
+            if (targets.Length == 0 && ipAddresses.Length > 0 && IsDefaultDiscoveryTypes(requestedDiscoveryTypes))
             {
-                discoveryTypes = [.. discoveryTypes, "IPRange"];
+                discoveryTypes = ["IPRange"];
+            }
+            else if (targets.Length == 0
+                     && ipAddresses.Length > 0
+                     && !discoveryTypes.Contains("IPRange", StringComparer.OrdinalIgnoreCase))
+            {
+                discoveryTypes = ["IPRange", .. discoveryTypes];
             }
 
             var tcpPorts = ParseTcpPorts(request.TcpPorts);
+            ValidateDiscoveryRequest(targets, discoveryTypes, ipAddresses, request.DomainController?.Trim() ?? "");
             var phases = BuildDiscoveryPhases(
                 targets,
                 discoveryTypes,
@@ -456,6 +462,52 @@ Find-DbaInstance @params |
         return ports.Distinct().ToArray();
     }
 
+    private static bool IsDefaultDiscoveryTypes(string[] discoveryTypes)
+    {
+        if (discoveryTypes.Length == 0)
+        {
+            return true;
+        }
+
+        var normalized = discoveryTypes
+            .Select(static type => type.Trim())
+            .Where(static type => type.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return normalized.SetEquals(["DomainSPN", "DataSourceEnumeration"]);
+    }
+
+    private static void ValidateDiscoveryRequest(
+        string[] targets,
+        string[] discoveryTypes,
+        string[] ipAddresses,
+        string domainController)
+    {
+        if (targets.Length > 0)
+        {
+            return;
+        }
+
+        var hasIpRangeDiscovery = discoveryTypes.Any(static type => string.Equals(type, "IPRange", StringComparison.OrdinalIgnoreCase));
+        if (hasIpRangeDiscovery && ipAddresses.Length == 0)
+        {
+            throw new ArgumentException("IPRange discovery needs an IP range. Add a CIDR/range such as 10.1.164.0/24, or remove IPRange from Discovery Type.");
+        }
+
+        if (ipAddresses.Length > 0)
+        {
+            return;
+        }
+
+        var usesDomainDiscovery = discoveryTypes.Any(static type =>
+            string.Equals(type, "DomainSPN", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, "Domain", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(type, "DomainServer", StringComparison.OrdinalIgnoreCase));
+        if (usesDomainDiscovery && string.IsNullOrWhiteSpace(domainController))
+        {
+            throw new ArgumentException("Domain discovery needs a scope before it starts. Add Targets, add IP Ranges, enter a Domain Controller, or remove DomainSPN/Domain/DomainServer from Discovery Type.");
+        }
+    }
+
     private static List<DiscoveryPhase> BuildDiscoveryPhases(
         string[] targets,
         string[] discoveryTypes,
@@ -491,23 +543,6 @@ Find-DbaInstance @params |
             return phases;
         }
 
-        foreach (var discoveryType in discoveryTypes.Where(static type => !string.Equals(type, "IPRange", StringComparison.OrdinalIgnoreCase)))
-        {
-            foreach (var scan in scanVariants)
-            {
-                var input = new DbatoolsDiscoveryInput(
-                    [],
-                    [discoveryType],
-                    scan.ScanTypes,
-                    [],
-                    scan.TcpPorts,
-                    domainController,
-                    minimumConfidence,
-                    purpose);
-                phases.Add(new DiscoveryPhase($"discovery {discoveryType} / {scan.Name}", DescribePlan(input), input));
-            }
-        }
-
         foreach (var ipAddress in ipAddresses)
         {
             foreach (var scan in scanVariants)
@@ -522,6 +557,23 @@ Find-DbaInstance @params |
                     minimumConfidence,
                     purpose);
                 phases.Add(new DiscoveryPhase($"IP range {ipAddress} / {scan.Name}", DescribePlan(input), input));
+            }
+        }
+
+        foreach (var discoveryType in discoveryTypes.Where(static type => !string.Equals(type, "IPRange", StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (var scan in scanVariants)
+            {
+                var input = new DbatoolsDiscoveryInput(
+                    [],
+                    [discoveryType],
+                    scan.ScanTypes,
+                    [],
+                    scan.TcpPorts,
+                    domainController,
+                    minimumConfidence,
+                    purpose);
+                phases.Add(new DiscoveryPhase($"discovery {discoveryType} / {scan.Name}", DescribePlan(input), input));
             }
         }
 
