@@ -15,7 +15,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Installer.Tests", "Installe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Installer.Core", "Installer.Core\Installer.Core.csproj", "{AFA0BA1D-42D6-4E01-9D6C-B7E327E1B7D3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PerformanceMonitor.Headless", "Headless\PerformanceMonitor.Headless.csproj", "{63C17106-FAE5-4417-974B-3C11AA8404B4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PerformanceMonitor.CentralRepository", "CentralRepository\PerformanceMonitor.CentralRepository.csproj", "{63C17106-FAE5-4417-974B-3C11AA8404B4}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PerformanceMonitor.Collectors", "Collectors\PerformanceMonitor.Collectors.csproj", "{338B45ED-082B-45E3-96DA-ED13D4924AC8}"
 EndProject

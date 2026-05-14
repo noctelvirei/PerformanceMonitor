@@ -1,0 +1,71 @@
+using Microsoft.Extensions.Options;
+using PerformanceMonitor.CentralRepository.Models;
+
+namespace PerformanceMonitor.CentralRepository.Storage;
+
+public sealed class RoutingCentralRepositoryStore : ICentralRepositoryStore
+{
+    private readonly IOptionsMonitor<MonitorOptions> _options;
+    private readonly CentralRepositoryStore _duckDbStore;
+    private readonly SqlServerCentralRepositoryStore _sqlServerStore;
+
+    public RoutingCentralRepositoryStore(
+        IOptionsMonitor<MonitorOptions> options,
+        CentralRepositoryStore duckDbStore,
+        SqlServerCentralRepositoryStore sqlServerStore)
+    {
+        _options = options;
+        _duckDbStore = duckDbStore;
+        _sqlServerStore = sqlServerStore;
+    }
+
+    public StorageInfoDto GetStorageInfo()
+        => CurrentStore.GetStorageInfo();
+
+    public Task InitializeAsync(CancellationToken cancellationToken)
+        => CurrentStore.InitializeAsync(cancellationToken);
+
+    public Task UpsertConfiguredServersAsync(IEnumerable<CollectionServerIdentity> servers, CancellationToken cancellationToken)
+        => CurrentStore.UpsertConfiguredServersAsync(servers, cancellationToken);
+
+    public Task RecordSnapshotAsync(CollectionSnapshot snapshot, CancellationToken cancellationToken)
+        => CurrentStore.RecordSnapshotAsync(snapshot, cancellationToken);
+
+    public Task<DateTime?> GetLastCpuSampleTimeAsync(string serverId, CancellationToken cancellationToken)
+        => CurrentStore.GetLastCpuSampleTimeAsync(serverId, cancellationToken);
+
+    public Task<IReadOnlyList<ServerHealthDto>> GetServersAsync(CancellationToken cancellationToken)
+        => CurrentStore.GetServersAsync(cancellationToken);
+
+    public Task<EstateSummaryDto> GetEstateSummaryAsync(CancellationToken cancellationToken)
+        => CurrentStore.GetEstateSummaryAsync(cancellationToken);
+
+    public Task<IReadOnlyList<ActiveAlertDto>> GetEstateActiveAlertsAsync(CancellationToken cancellationToken)
+        => CurrentStore.GetEstateActiveAlertsAsync(cancellationToken);
+
+    public Task<IReadOnlyList<CollectionLogDto>> GetCollectionLogAsync(int limit, CancellationToken cancellationToken)
+        => CurrentStore.GetCollectionLogAsync(limit, cancellationToken);
+
+    public Task<IReadOnlyList<TopWaitDto>> GetTopWaitsAsync(string serverId, int hoursBack, int limit, CancellationToken cancellationToken)
+        => CurrentStore.GetTopWaitsAsync(serverId, hoursBack, limit, cancellationToken);
+
+    public Task<IReadOnlyList<CpuSampleDto>> GetCpuSamplesAsync(string serverId, int hoursBack, CancellationToken cancellationToken)
+        => CurrentStore.GetCpuSamplesAsync(serverId, hoursBack, cancellationToken);
+
+    public Task<IReadOnlyList<WaitingTaskDto>> GetWaitingTasksAsync(string serverId, int hoursBack, int limit, CancellationToken cancellationToken)
+        => CurrentStore.GetWaitingTasksAsync(serverId, hoursBack, limit, cancellationToken);
+
+    public Task<IReadOnlyList<CollectorSampleDto>> GetCollectorSamplesAsync(string serverId, string collectorName, int hoursBack, int limit, CancellationToken cancellationToken)
+        => CurrentStore.GetCollectorSamplesAsync(serverId, collectorName, hoursBack, limit, cancellationToken);
+
+    public Task<ServerExperienceDto> GetServerExperienceAsync(string serverId, int hoursBack, CancellationToken cancellationToken)
+        => CurrentStore.GetServerExperienceAsync(serverId, hoursBack, cancellationToken);
+
+    public Task ApplyRetentionAsync(CancellationToken cancellationToken)
+        => CurrentStore.ApplyRetentionAsync(cancellationToken);
+
+    private ICentralRepositoryStore CurrentStore
+        => string.Equals(_options.CurrentValue.StorageProvider, "SqlServer", StringComparison.OrdinalIgnoreCase)
+            ? _sqlServerStore
+            : _duckDbStore;
+}

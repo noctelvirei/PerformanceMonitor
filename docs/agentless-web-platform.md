@@ -117,7 +117,7 @@ The service account owns collection scheduling and storage writes only in the ce
 2. Create a central repository model.
    Add server identity to collection storage and create central inventory/configuration tables.
 
-3. Build the headless collector worker.
+3. Build the central repository collector worker.
    Port the Lite remote collector loop to a .NET Worker Service that writes to the central repository.
 
 4. Add API endpoints over existing dashboard queries.

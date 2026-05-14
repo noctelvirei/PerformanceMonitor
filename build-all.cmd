@@ -32,11 +32,11 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 
-:: Build Headless Estate Monitor
-call "%~dp0package-headless.cmd"
+:: Build Central Repository Estate Monitor
+call "%~dp0package-central-repository.cmd"
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo ERROR: Headless package failed!
+    echo ERROR: Central Repository package failed!
     popd
     exit /b 1
 )
