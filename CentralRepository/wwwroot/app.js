@@ -14,7 +14,8 @@ const state = {
   summary: null,
   logs: [],
   settings: null,
-  loadedOnce: false
+  loadedOnce: false,
+  searchQuery: ""
 };
 
 const experienceTabs = new Set(["queries", "resources", "memory", "jobs", "config"]);
@@ -24,7 +25,9 @@ const els = {
   serverView: document.getElementById("server-view"),
   settingsView: document.getElementById("settings-view"),
   overviewButton: document.getElementById("overview-button"),
+  serverSearch: document.getElementById("server-search"),
   generatedAt: document.getElementById("generated-at"),
+  overviewFooter: document.getElementById("overview-footer"),
   healthSummary: document.getElementById("health-summary"),
   alertCount: document.getElementById("alert-count"),
   purposeFilter: document.getElementById("purpose-filter"),
@@ -82,6 +85,10 @@ els.purposeFilter.addEventListener("change", () => {
   state.purposeFilter = els.purposeFilter.value;
   renderOverview();
 });
+els.serverSearch.addEventListener("input", () => {
+  state.searchQuery = els.serverSearch.value;
+  renderOverview();
+});
 els.notify.addEventListener("click", async () => {
   await browser.requestNotifications();
   browser.updateNotifyButton(els.notify);
@@ -103,7 +110,7 @@ async function loadAll() {
   const { summary, logs } = await api.loadDashboard();
   state.summary = summary;
   state.logs = logs;
-  state.dashboard = buildDashboardModel(summary, logs, state.purposeFilter);
+  state.dashboard = buildDashboardModel(summary, logs, state.purposeFilter, state.searchQuery);
   state.purposeFilter = state.dashboard.purposeFilter;
 
   if (!state.selectedServerId && state.dashboard.servers.length > 0) {
@@ -119,7 +126,7 @@ async function loadAll() {
 
 function renderOverview() {
   if (!state.summary) return;
-  state.dashboard = buildDashboardModel(state.summary, state.logs, state.purposeFilter);
+  state.dashboard = buildDashboardModel(state.summary, state.logs, state.purposeFilter, state.searchQuery);
   state.purposeFilter = state.dashboard.purposeFilter;
   overviewView.render(state.dashboard, state.selectedServerId);
 }

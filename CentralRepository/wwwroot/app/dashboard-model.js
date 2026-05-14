@@ -36,13 +36,16 @@ export function healthRank(health) {
   }
 }
 
-export function buildDashboardModel(summary, logs, purposeFilter) {
+export function buildDashboardModel(summary, logs, purposeFilter, searchQuery = "") {
   const servers = summary.servers || [];
   const activeAlerts = summary.activeAlerts || [];
   const purposes = [...new Set(servers.map(server => normalizePurpose(server.purpose)))].sort(sortPurposes);
   const validFilters = ["all", ...purposes];
   const filter = validFilters.includes(purposeFilter) ? purposeFilter : "all";
-  const visibleServers = servers.filter(server => filter === "all" || normalizePurpose(server.purpose) === filter);
+  const query = String(searchQuery || "").trim().toLowerCase();
+  const visibleServers = servers.filter(server =>
+    (filter === "all" || normalizePurpose(server.purpose) === filter)
+      && (!query || matchesServerSearch(server, query)));
 
   return {
     generatedAt: summary.generatedAt,
@@ -51,8 +54,28 @@ export function buildDashboardModel(summary, logs, purposeFilter) {
     alerts: buildAlerts(activeAlerts),
     purposes,
     purposeFilter: filter,
+    searchQuery: query,
+    visibleServerCount: visibleServers.length,
     groups: groupServersByPurpose(visibleServers)
   };
+}
+
+function matchesServerSearch(server, query) {
+  const values = [
+    server.displayName,
+    server.serverId,
+    server.dataSource,
+    server.edition,
+    server.productVersion,
+    server.healthState,
+    server.healthReason,
+    normalizePurpose(server.purpose),
+    server.topWaitType
+  ];
+
+  return values
+    .filter(Boolean)
+    .some(value => String(value).toLowerCase().includes(query));
 }
 
 function groupServersByPurpose(servers) {

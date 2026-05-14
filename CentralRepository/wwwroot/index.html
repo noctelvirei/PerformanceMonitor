@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Central Repository Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230c1219'/%3E%3Cpath d='M8 10h16M8 16h16M8 22h16M11 7v18M21 7v18' stroke='%2362b6ff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles.css?v=professional-ui-1">
+  <link rel="stylesheet" href="/styles.css?v=visual-polish-1">
 </head>
 <body>
   <div class="app-shell">
@@ -40,9 +40,15 @@
         <h1>Performance Monitor</h1>
         <p>Central repository for estate health, collection status, and SQL Server signals.</p>
       </div>
-      <div class="header-actions">
-        <button id="notify-button" type="button">Enable Notifications</button>
-        <button id="refresh-button" type="button">Refresh</button>
+      <div class="command-bar">
+        <label class="search-box" aria-label="Search servers">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z" /></svg>
+          <input id="server-search" type="search" placeholder="Search servers, purposes, alerts...">
+        </label>
+        <div class="header-actions">
+          <button id="notify-button" type="button">Enable Notifications</button>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
       </div>
     </header>
 
@@ -60,6 +66,7 @@
               </div>
             </div>
             <div id="server-card-grid" class="server-card-grid"></div>
+            <div id="overview-footer" class="overview-footer"></div>
           </section>
         </div>
 
@@ -449,6 +456,6 @@
   </div>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script type="module" src="/app.js?v=professional-ui-1"></script>
+  <script type="module" src="/app.js?v=visual-polish-1"></script>
 </body>
 </html>

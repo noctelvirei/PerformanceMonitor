@@ -9,6 +9,7 @@ export function createOverviewView(els, callbacks) {
       renderPurposeOptions(els.purposeFilter, model.purposes, model.purposeFilter);
       renderServerCards(els.serverCardGrid, model.groups, selectedServerId, callbacks.onServer);
       renderAlerts(els.alertCount, els.alertList, model.alerts, callbacks.onServer);
+      renderOverviewFooter(els.overviewFooter, model);
     }
   };
 }
@@ -56,7 +57,7 @@ function renderPurposeOptions(select, purposes, current) {
 function renderServerCards(container, groups, selectedServerId, onServer) {
   container.innerHTML = "";
   if (!groups.length) {
-    container.innerHTML = `<div class="empty-state">No servers.</div>`;
+    container.innerHTML = `<div class="empty-state">No servers match the current view.</div>`;
     return;
   }
 
@@ -78,6 +79,21 @@ function renderServerCards(container, groups, selectedServerId, onServer) {
 
     container.appendChild(section);
   }
+}
+
+function renderOverviewFooter(container, model) {
+  if (!container) return;
+
+  const enabled = model.servers.filter(server => server.isEnabled !== false).length;
+  const disabled = model.servers.length - enabled;
+  const filtered = model.visibleServerCount ?? model.servers.length;
+  container.innerHTML = `
+    <span>Total: ${model.servers.length} server${model.servers.length === 1 ? "" : "s"}</span>
+    <span>${enabled} monitoring</span>
+    <span>${disabled} disabled</span>
+    <span>${filtered} shown</span>
+    <span>Last updated: ${escapeHtml(formatDate(model.generatedAt) || "pending")}</span>
+  `;
 }
 
 function createServerCard(server, selectedServerId, onServer) {
