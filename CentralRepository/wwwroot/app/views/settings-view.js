@@ -254,9 +254,10 @@ function updateDiscoveryModeControls(form) {
 
   for (const field of form.querySelectorAll("[data-discovery-field]")) {
     const visible = config.visibleFields.has(field.dataset.discoveryField);
+    const required = field.dataset.discoveryField === "targets" || field.dataset.discoveryField === "ipRange";
     field.hidden = !visible;
     for (const input of field.querySelectorAll("input, select, textarea")) {
-      input.required = visible && field.dataset.discoveryField !== "tcpPorts";
+      input.required = visible && required;
     }
   }
 }
@@ -631,14 +632,13 @@ export function collectDiscoverySettings(form) {
   }
 
   if (mode === "spn" || mode === "domainServer" || mode === "domain") {
-    const domainController = requireDiscoveryValue(form, "discoveryDomainController", "Enter the domain controller to query.");
     return {
       targets: "",
       discoveryTypes: getFormValue(form, "discoveryMethod") || "DomainSPN",
       scanTypes,
       ipAddresses: "",
       tcpPorts,
-      domainController,
+      domainController: getFormValue(form, "discoveryDomainController"),
       minimumConfidence,
       purpose,
       timeoutSeconds

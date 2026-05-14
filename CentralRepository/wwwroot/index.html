@@ -400,7 +400,7 @@
                     <input name="discoveryTcpPorts" type="text" value="1433">
                     <span class="field-help">Comma-separated ports to test, for example 1433,1434,51433.</span>
                   </label>
-                  <label data-discovery-field="domainController">Domain Controller<input name="discoveryDomainController" type="text"><span class="field-help">Required for Active Directory discovery.</span></label>
+                  <label data-discovery-field="domainController">Domain Controller<input name="discoveryDomainController" type="text"><span class="field-help">Optional. Leave blank to use the nearest domain controller; set this for a specific DC or cross-domain scan.</span></label>
                   <label>Confidence<select name="discoveryMinimumConfidence"><option value="Medium">Medium</option><option value="High">High</option><option value="Low">Low</option></select></label>
                   <label>Purpose<input name="discoveryPurpose" type="text" value="Development"></label>
                   <label>Timeout Per Phase<input name="discoveryTimeoutSeconds" type="number" min="10" value="120"><span class="field-help">Applies to each discovery phase, not the whole scan. Missing dbatools fails during preflight.</span></label>

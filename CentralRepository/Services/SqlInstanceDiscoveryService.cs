@@ -84,7 +84,7 @@ public sealed class SqlInstanceDiscoveryService
             }
 
             var tcpPorts = ParseTcpPorts(request.TcpPorts);
-            ValidateDiscoveryRequest(targets, discoveryTypes, ipAddresses, request.DomainController?.Trim() ?? "");
+            ValidateDiscoveryRequest(targets, discoveryTypes, ipAddresses);
             var phases = BuildDiscoveryPhases(
                 targets,
                 discoveryTypes,
@@ -479,8 +479,7 @@ Find-DbaInstance @params |
     private static void ValidateDiscoveryRequest(
         string[] targets,
         string[] discoveryTypes,
-        string[] ipAddresses,
-        string domainController)
+        string[] ipAddresses)
     {
         if (targets.Length > 0)
         {
@@ -498,13 +497,9 @@ Find-DbaInstance @params |
             return;
         }
 
-        var usesDomainDiscovery = discoveryTypes.Any(static type =>
-            string.Equals(type, "DomainSPN", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(type, "Domain", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(type, "DomainServer", StringComparison.OrdinalIgnoreCase));
-        if (usesDomainDiscovery && string.IsNullOrWhiteSpace(domainController))
+        if (discoveryTypes.Length == 0)
         {
-            throw new ArgumentException("Domain discovery needs a scope before it starts. Add Targets, add IP Ranges, enter a Domain Controller, or remove DomainSPN/Domain/DomainServer from Discovery Type.");
+            throw new ArgumentException("Choose a discovery source before scanning.");
         }
     }
 

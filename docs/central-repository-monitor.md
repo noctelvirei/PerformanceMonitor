@@ -73,9 +73,9 @@ Discovery input rules:
 - `Discovery Mode`: choose one source first: known servers, registered SQL SPNs, AD Windows servers, AD computers, IP range, or SQL Browser broadcast. The page changes the available scan options to match that source.
 - `Known servers`: scans the named computer names or SQL hosts directly.
 - `Registered SQL SPNs`: uses Active Directory service principal names to find registered SQL instances. This is usually a sharper shortcut than sweeping an entire IP range.
+- `SQL Browser broadcast`: uses DataSourceEnumeration, which is the same style of UDP broadcast enumeration used by SSMS. dbatools uses those results to compile candidate computers, so keep the Browser scan enabled if you want matching browser details in the scan phase.
 - `IP range`: uses dbatools-supported IP range syntax such as `10.1.164.0/24` or `10.1.164.1-10.1.164.254`. A bare `10.1.164.0` means that one address only.
-- `AD Windows servers` and `AD computers`: require a domain controller, then scan the discovered host list for SQL.
-- `SQL Browser broadcast`: uses DataSourceEnumeration without requiring targets, IP ranges, or a domain controller.
+- `AD Windows servers` and `AD computers`: use Active Directory to build a host list, then scan it for SQL. Leave Domain Controller blank to use the nearest DC, or set one explicitly for a specific DC or cross-domain scan.
 
 For a dozen or more dev boxes, a single central SQL repository is usually the cleanest shape. For larger estates, run one collector per estate boundary, such as Development, Staging, and Production, and have those collectors post to the parent dashboard API. The monitored SQL Servers still only need normal remote query permissions; they do not need local Performance Monitor databases or Agent jobs.
 
