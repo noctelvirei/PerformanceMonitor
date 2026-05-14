@@ -15,7 +15,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "$HEAD_REF" != "dev" ] && [ "$BASE_REF" == "main" ]; then
-            echo "::error::Pull requests to main are only allowed from dev. Please target the dev branch instead."
+          if [ "$BASE_REF" == "main" ] && [ "$HEAD_REF" != "dev" ] && [ "$HEAD_REF" != "sync/upstream-dev" ]; then
+            echo "::error::Pull requests to main are only allowed from dev or sync/upstream-dev. Please target the dev branch instead."
             exit 1
           fi

@@ -1,0 +1,147 @@
+name: Sync upstream dev
+
+on:
+  schedule:
+    # Check Erik's dev branch every morning. GitHub schedules use UTC.
+    - cron: '30 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream-dev
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: erikdarlingdata/PerformanceMonitor
+  UPSTREAM_BRANCH: dev
+  BASE_BRANCH: main
+  SYNC_BRANCH: sync/upstream-dev
+
+jobs:
+  sync:
+    name: Open upstream dev intake PR
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+
+      - name: Configure git
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream dev
+        shell: pwsh
+        run: |
+          $upstreamUrl = "https://github.com/$env:UPSTREAM_REPOSITORY.git"
+          git remote get-url upstream 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            git remote set-url upstream $upstreamUrl
+          } else {
+            git remote add upstream $upstreamUrl
+          }
+
+          git fetch origin "$($env:BASE_BRANCH):refs/remotes/origin/$($env:BASE_BRANCH)"
+          git fetch upstream "$($env:UPSTREAM_BRANCH):refs/remotes/upstream/$($env:UPSTREAM_BRANCH)"
+
+      - name: Check for new upstream commits
+        id: check
+        shell: pwsh
+        run: |
+          $baseRef = "origin/$env:BASE_BRANCH"
+          $upstreamRef = "upstream/$env:UPSTREAM_BRANCH"
+
+          git merge-base --is-ancestor $upstreamRef $baseRef
+          if ($LASTEXITCODE -eq 0) {
+            "has_changes=false" >> $env:GITHUB_OUTPUT
+            "Upstream $env:UPSTREAM_BRANCH is already included in $env:BASE_BRANCH." >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
+          $commitList = git log --oneline "$baseRef..$upstreamRef"
+          "has_changes=true" >> $env:GITHUB_OUTPUT
+          "## Upstream commits waiting for intake" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          $commitList | ForEach-Object { "- ``$_``" >> $env:GITHUB_STEP_SUMMARY }
+
+      - name: Merge upstream dev into sync branch
+        if: steps.check.outputs.has_changes == 'true'
+        shell: pwsh
+        run: |
+          git switch -C "$env:SYNC_BRANCH" "origin/$env:BASE_BRANCH"
+          git merge --no-ff --no-edit "upstream/$env:UPSTREAM_BRANCH"
+
+      - name: Push sync branch
+        if: steps.check.outputs.has_changes == 'true'
+        shell: pwsh
+        run: |
+          git push --force-with-lease origin "HEAD:$env:SYNC_BRANCH"
+
+      - name: Open or update pull request
+        if: steps.check.outputs.has_changes == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $body = @'
+          This PR merges the latest `upstream/dev` from `erikdarlingdata/PerformanceMonitor` into this fork's `main`.
+
+          Purpose:
+          - Keep this fork close enough to Erik Darling's community work to pick up useful fixes.
+          - Keep the merge reviewable instead of auto-applying upstream changes.
+          - Let CI tell us whether the upstream changes still fit our central repository direction.
+
+          Review notes:
+          - Check the changed files for any clashes with central repository mode.
+          - Pay special attention to installer, Lite, collector, SQL upgrade, and alerting changes.
+          - Merge manually after the build is green and the diff makes sense.
+          '@
+
+          $existing = gh pr list `
+            --repo $env:GITHUB_REPOSITORY `
+            --head "$env:SYNC_BRANCH" `
+            --base "$env:BASE_BRANCH" `
+            --state open `
+            --json number `
+            --jq '.[0].number'
+
+          if ($existing) {
+            gh pr edit $existing `
+              --repo $env:GITHUB_REPOSITORY `
+              --title "Sync upstream dev into fork" `
+              --body $body
+            "Updated existing PR #$existing." >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            gh pr create `
+              --repo $env:GITHUB_REPOSITORY `
+              --base "$env:BASE_BRANCH" `
+              --head "$env:SYNC_BRANCH" `
+              --title "Sync upstream dev into fork" `
+              --body $body
+          }
+
+      - name: Setup .NET 8.0
+        if: steps.check.outputs.has_changes == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Build merged branch
+        if: steps.check.outputs.has_changes == 'true'
+        shell: pwsh
+        run: dotnet build PerformanceMonitor.sln -c Release
+
+      - name: Package Central Repository
+        if: steps.check.outputs.has_changes == 'true'
+        shell: cmd
+        run: package-central-repository.cmd
