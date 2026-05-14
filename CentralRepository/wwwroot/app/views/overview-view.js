@@ -5,11 +5,44 @@ export function createOverviewView(els, callbacks) {
   return {
     render(model, selectedServerId) {
       els.generatedAt.textContent = `Updated ${formatDate(model.generatedAt)}`;
+      renderHealthSummary(els.healthSummary, model.servers);
       renderPurposeOptions(els.purposeFilter, model.purposes, model.purposeFilter);
       renderServerCards(els.serverCardGrid, model.groups, selectedServerId, callbacks.onServer);
       renderAlerts(els.alertCount, els.alertList, model.alerts, callbacks.onServer);
     }
   };
+}
+
+function renderHealthSummary(container, servers) {
+  const counts = {
+    green: 0,
+    yellow: 0,
+    red: 0,
+    disabled: 0
+  };
+
+  for (const server of servers || []) {
+    const state = String(server.healthState || "yellow").toLowerCase();
+    if (state in counts) counts[state] += 1;
+    else counts.yellow += 1;
+  }
+
+  container.innerHTML = [
+    summaryTile("green", "Green", counts.green, "All clear"),
+    summaryTile("yellow", "Yellow", counts.yellow, "Warning"),
+    summaryTile("red", "Red", counts.red, "Needs attention"),
+    summaryTile("disabled", "Disabled", counts.disabled, "Not monitored")
+  ].join("");
+}
+
+function summaryTile(state, label, count, caption) {
+  return `
+    <article class="health-tile ${state}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${count}</strong>
+      <small>${escapeHtml(caption)}</small>
+    </article>
+  `;
 }
 
 function renderPurposeOptions(select, purposes, current) {
@@ -65,7 +98,9 @@ function createServerCard(server, selectedServerId, onServer) {
         <strong>${escapeHtml(title)}</strong>
         <small>${escapeHtml(platform)} / ${escapeHtml(os)}</small>
       </div>
-      <span class="card-menu" aria-hidden="true">...</span>
+      <span class="card-menu" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 7.2v.1M12 12v.1M12 16.8v.1" /></svg>
+      </span>
     </div>
     <div class="mini-stats">
       <span><b>${server.latestSqlCpuUtilization ?? "--"}${server.latestSqlCpuUtilization == null ? "" : "%"}</b><small>CPU</small></span>

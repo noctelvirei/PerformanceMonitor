@@ -23,7 +23,9 @@ const els = {
   overviewView: document.getElementById("overview-view"),
   serverView: document.getElementById("server-view"),
   settingsView: document.getElementById("settings-view"),
+  overviewButton: document.getElementById("overview-button"),
   generatedAt: document.getElementById("generated-at"),
+  healthSummary: document.getElementById("health-summary"),
   alertCount: document.getElementById("alert-count"),
   purposeFilter: document.getElementById("purpose-filter"),
   serverCardGrid: document.getElementById("server-card-grid"),
@@ -65,6 +67,7 @@ const settingsView = createSettingsView(els, {
 });
 
 els.refresh.addEventListener("click", () => loadAll());
+els.overviewButton.addEventListener("click", () => router.goOverview());
 els.back.addEventListener("click", () => router.goOverview());
 els.settingsButton.addEventListener("click", () => router.goSettings());
 els.settingsBack.addEventListener("click", () => router.goOverview());
@@ -127,11 +130,13 @@ async function applyRoute(route) {
   }
 
   if (route.name === "settings") {
+    updatePrimaryNav("settings");
     await showSettingsView();
     return;
   }
 
   if (route.name === "server") {
+    updatePrimaryNav("dashboard");
     state.selectedServerId = route.serverId;
     state.activeTab = route.tab || "stats";
     serverDetailView.show(state.activeTab);
@@ -140,10 +145,16 @@ async function applyRoute(route) {
   }
 
   state.activeTab = "overview";
+  updatePrimaryNav("dashboard");
   els.overviewView.classList.remove("hidden");
   els.serverView.classList.add("hidden");
   els.settingsView.classList.add("hidden");
   renderOverview();
+}
+
+function updatePrimaryNav(activeArea) {
+  els.overviewButton.classList.toggle("active", activeArea === "dashboard");
+  els.settingsButton.classList.toggle("active", activeArea === "settings");
 }
 
 async function showSettingsView() {
