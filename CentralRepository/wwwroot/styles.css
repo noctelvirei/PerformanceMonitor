@@ -1927,6 +1927,14 @@ textarea:focus-visible {
   letter-spacing: 0;
 }
 
+.settings-grid .full {
+  grid-column: 1 / -1;
+}
+
+.settings-grid [hidden] {
+  display: none !important;
+}
+
 .settings-grid input,
 .settings-grid select,
 .settings-grid textarea {
@@ -1935,9 +1943,87 @@ textarea:focus-visible {
   letter-spacing: 0;
 }
 
+.field-label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .settings-grid .field-help {
   text-transform: none;
   letter-spacing: 0;
+}
+
+.discovery-choice-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.discovery-choice-panel p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.discovery-choice-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 9px;
+}
+
+.discovery-choice-list.compact {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.discovery-choice-list button {
+  position: relative;
+  min-height: 82px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 11px 12px;
+  border-color: rgba(255, 255, 255, .07);
+  background: #111923;
+  text-align: left;
+  white-space: normal;
+}
+
+.discovery-choice-list button strong,
+.discovery-choice-list button span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.discovery-choice-list button strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.discovery-choice-list button span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.discovery-choice-list button.active {
+  border-color: #5da8ea;
+  background: #142236;
+  box-shadow: inset 3px 0 0 var(--accent), 0 0 0 2px rgba(98, 182, 255, .12);
+}
+
+.discovery-choice-list button.active::after {
+  content: "Selected";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
 }
 
 .settings-callout {

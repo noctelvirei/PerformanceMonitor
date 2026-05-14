@@ -369,27 +369,38 @@
                   <button id="discover-servers-button" type="button">Scan</button>
                 </div>
                 <div class="settings-grid">
-                  <label class="wide">Targets
+                  <div class="discovery-choice-panel full">
+                    <span class="field-label">Discovery Mode</span>
+                    <p data-discovery-mode-help>Choose one scope. The remaining options change to match it.</p>
+                    <div class="discovery-choice-list" data-discovery-mode-list>
+                      <button type="button" data-discovery-mode-option="targets"><strong>Known servers</strong><span>Scan a list of server names or SQL hosts directly.</span></button>
+                      <button type="button" data-discovery-mode-option="spn"><strong>Registered SQL SPNs</strong><span>Shortcut through Active Directory service registrations instead of sweeping a subnet.</span></button>
+                      <button type="button" data-discovery-mode-option="domainServer"><strong>AD Windows servers</strong><span>Start from enabled Windows Server objects in Active Directory.</span></button>
+                      <button type="button" data-discovery-mode-option="domain"><strong>AD computers</strong><span>Start from domain computer objects, then probe for SQL.</span></button>
+                      <button type="button" data-discovery-mode-option="ipRange"><strong>IP range</strong><span>Scan a subnet or explicit address range.</span></button>
+                      <button type="button" data-discovery-mode-option="broadcast"><strong>SQL Browser broadcast</strong><span>Use SSMS-style SQL instance enumeration.</span></button>
+                    </div>
+                    <input name="discoveryMode" type="hidden" value="targets">
+                    <input name="discoveryMethod" type="hidden">
+                  </div>
+                  <div class="discovery-choice-panel full">
+                    <span class="field-label">Scan Method</span>
+                    <div class="discovery-choice-list compact" data-discovery-scan-list></div>
+                    <input name="discoveryScanPreset" type="hidden">
+                  </div>
+                  <label class="wide" data-discovery-field="targets">Targets
                     <input name="discoveryTargets" type="text">
                     <span class="field-help">Known computer names or SQL hosts. When this is filled in, dbatools scans those targets directly.</span>
                   </label>
-                  <label class="wide">Discovery Type
-                    <input name="discoveryTypes" type="text" value="DomainSPN,DataSourceEnumeration">
-                    <span class="field-help">DomainSPN needs a Domain Controller when no Targets or IP Ranges are supplied. Default discovery is scoped to IPRange when IP Ranges are filled in.</span>
-                  </label>
-                  <label class="wide">Scan Type
-                    <input name="discoveryScanTypes" type="text" value="Browser,TCPPort">
-                    <span class="field-help">Browser enumeration and TCP port checks are the usual starting point.</span>
-                  </label>
-                  <label>IP Ranges
+                  <label data-discovery-field="ipRange">IP Ranges
                     <input name="discoveryIpAddresses" type="text" placeholder="10.1.164.0/24 or 10.1.164.1-10.1.164.254">
                     <span class="field-help">Use CIDR or explicit ranges. A bare 10.1.164.0 scans only that address, not the subnet.</span>
                   </label>
-                  <label>TCP Ports
+                  <label data-discovery-field="tcpPorts">TCP Ports
                     <input name="discoveryTcpPorts" type="text" value="1433">
                     <span class="field-help">Comma-separated ports to test, for example 1433,1434,51433.</span>
                   </label>
-                  <label>Domain Controller<input name="discoveryDomainController" type="text"><span class="field-help">Required for unscoped DomainSPN, Domain, or DomainServer discovery.</span></label>
+                  <label data-discovery-field="domainController">Domain Controller<input name="discoveryDomainController" type="text"><span class="field-help">Required for Active Directory discovery.</span></label>
                   <label>Confidence<select name="discoveryMinimumConfidence"><option value="Medium">Medium</option><option value="High">High</option><option value="Low">Low</option></select></label>
                   <label>Purpose<input name="discoveryPurpose" type="text" value="Development"></label>
                   <label>Timeout Per Phase<input name="discoveryTimeoutSeconds" type="number" min="10" value="120"><span class="field-help">Applies to each discovery phase, not the whole scan. Missing dbatools fails during preflight.</span></label>

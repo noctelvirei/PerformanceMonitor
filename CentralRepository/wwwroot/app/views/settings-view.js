@@ -2,6 +2,7 @@ import { escapeAttr, escapeHtml } from "../html.js";
 
 export function createSettingsView(els, callbacks) {
   wireSettingsNavigation();
+  wireDiscoveryModeControls(els.settingsForm);
 
   return {
     render(settings) {
@@ -132,6 +133,152 @@ function wireSettingsNavigation() {
   }
 
   activate(buttons.find((button) => button.classList.contains("active"))?.dataset.settingsTarget || buttons[0].dataset.settingsTarget || "");
+}
+
+const discoveryModeOptions = {
+  targets: {
+    modeHelp: "Scan a known list of servers or hosts.",
+    discoveryType: "",
+    visibleFields: new Set(["targets", "tcpPorts"]),
+    scans: [
+      ["Browser,TCPPort", "Browser + TCP port", "Good default for named SQL hosts."],
+      ["Browser", "Browser only", "Checks the SQL Browser service without port probing."],
+      ["TCPPort", "TCP port only", "Tests the configured SQL ports."],
+      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
+    ]
+  },
+  spn: {
+    modeHelp: "Find registered SQL Server service principal names in Active Directory. This is a targeted shortcut before considering an IP sweep.",
+    discoveryType: "DomainSPN",
+    visibleFields: new Set(["domainController", "tcpPorts"]),
+    scans: [
+      ["Browser,TCPPort", "Browser + TCP port", "Validates SPN candidates with SQL Browser and configured ports."],
+      ["TCPPort", "TCP port only", "Checks the configured SQL ports for SPN candidates."],
+      ["Browser", "Browser only", "Asks SQL Browser for instance details on SPN candidates."],
+      ["SPN,TCPPort", "SPN + TCP port", "Keeps validation close to AD registrations and port checks."],
+      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
+    ]
+  },
+  domainServer: {
+    modeHelp: "Find enabled Windows Server objects in Active Directory, then scan them for SQL.",
+    discoveryType: "DomainServer",
+    visibleFields: new Set(["domainController", "tcpPorts"]),
+    scans: [
+      ["Browser,TCPPort", "Browser + TCP port", "Balanced check for likely SQL on AD server objects."],
+      ["SqlService", "SQL service inventory", "Uses CIM/WMI service enumeration where the service account has rights."],
+      ["TCPPort", "TCP port only", "Checks configured SQL ports on AD server objects."],
+      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
+    ]
+  },
+  domain: {
+    modeHelp: "Find domain computer objects, then scan them for SQL. This can be broad; SPNs or AD Windows servers are usually sharper first choices.",
+    discoveryType: "Domain",
+    visibleFields: new Set(["domainController", "tcpPorts"]),
+    scans: [
+      ["Browser,TCPPort", "Browser + TCP port", "Balanced check across domain computer candidates."],
+      ["TCPPort", "TCP port only", "Checks configured SQL ports across domain computer candidates."],
+      ["SqlService", "SQL service inventory", "Uses CIM/WMI service enumeration where the service account has rights."],
+      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
+    ]
+  },
+  ipRange: {
+    modeHelp: "Scan a subnet or explicit IP range. Use this when AD/SPN discovery will miss machines or you need to cover a network segment.",
+    discoveryType: "IPRange",
+    visibleFields: new Set(["ipRange", "tcpPorts"]),
+    scans: [
+      ["TCPPort", "TCP port", "Fastest and clearest option for IP ranges."],
+      ["TCPPort,Browser", "TCP port + Browser", "Adds Browser checks after port probing."],
+      ["Ping,TCPPort", "Ping + TCP port", "Pings first, then checks SQL ports."],
+      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
+    ]
+  },
+  broadcast: {
+    modeHelp: "Use SQL Browser broadcast enumeration. No target list or domain controller is required.",
+    discoveryType: "DataSourceEnumeration",
+    visibleFields: new Set(["tcpPorts"]),
+    scans: [
+      ["Browser", "Browser", "Matches the broadcast discovery method."],
+      ["Browser,TCPPort", "Browser + TCP port", "Adds default SQL port checks to browser discovery."],
+      ["Default", "dbatools default", "Lets dbatools pick its normal scan set."]
+    ]
+  }
+};
+
+function wireDiscoveryModeControls(form) {
+  if (!form || form.dataset.discoveryModeWired === "true") {
+    return;
+  }
+
+  form.dataset.discoveryModeWired = "true";
+  const mode = form.elements.discoveryMode;
+  const scan = form.elements.discoveryScanPreset;
+  const modeList = form.querySelector("[data-discovery-mode-list]");
+  const scanList = form.querySelector("[data-discovery-scan-list]");
+  if (!mode || !scan || !modeList || !scanList) {
+    return;
+  }
+
+  modeList.addEventListener("click", event => {
+    const button = event.target.closest("[data-discovery-mode-option]");
+    if (!button) return;
+    mode.value = button.dataset.discoveryModeOption || "targets";
+    updateDiscoveryModeControls(form);
+  });
+  scanList.addEventListener("click", event => {
+    const button = event.target.closest("[data-discovery-value]");
+    if (!button) return;
+    const config = discoveryModeOptions[mode.value] || discoveryModeOptions.targets;
+    scan.value = button.dataset.discoveryValue || "";
+    renderDiscoveryChoiceList(scanList, config.scans, scan.value);
+  });
+  updateDiscoveryModeControls(form);
+}
+
+function updateDiscoveryModeControls(form) {
+  const modeField = form.elements.discoveryMode;
+  const mode = discoveryModeOptions[modeField?.value] ? modeField.value : "targets";
+  const config = discoveryModeOptions[mode];
+  const scanField = form.elements.discoveryScanPreset;
+  const scanList = form.querySelector("[data-discovery-scan-list]");
+
+  form.elements.discoveryMode.value = mode;
+  form.elements.discoveryMethod.value = config.discoveryType;
+  scanField.value = config.scans.some(([value]) => value === scanField.value) ? scanField.value : config.scans[0][0];
+  renderDiscoveryModeButtons(form, mode);
+  renderDiscoveryChoiceList(scanList, config.scans, scanField.value);
+
+  const modeHelp = form.querySelector("[data-discovery-mode-help]");
+  if (modeHelp) {
+    modeHelp.textContent = config.modeHelp;
+  }
+
+  for (const field of form.querySelectorAll("[data-discovery-field]")) {
+    const visible = config.visibleFields.has(field.dataset.discoveryField);
+    field.hidden = !visible;
+    for (const input of field.querySelectorAll("input, select, textarea")) {
+      input.required = visible && field.dataset.discoveryField !== "tcpPorts";
+    }
+  }
+}
+
+function renderDiscoveryModeButtons(form, selectedMode) {
+  for (const button of form.querySelectorAll("[data-discovery-mode-option]")) {
+    const selected = button.dataset.discoveryModeOption === selectedMode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function renderDiscoveryChoiceList(container, options, selectedValue) {
+  if (!container) return;
+  container.innerHTML = options
+    .map(([value, label, help]) => `
+      <button type="button" data-discovery-value="${escapeAttr(value)}" class="${value === selectedValue ? "active" : ""}" aria-pressed="${value === selectedValue ? "true" : "false"}">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(help)}</span>
+      </button>
+    `)
+    .join("");
 }
 
 function renderMcpAccess(form, access) {
@@ -446,17 +593,79 @@ function collectAlertRules(form) {
 }
 
 export function collectDiscoverySettings(form) {
+  const mode = getFormValue(form, "discoveryMode") || "targets";
+  const scanTypes = getFormValue(form, "discoveryScanPreset") || "Browser,TCPPort";
+  const tcpPorts = getFormValue(form, "discoveryTcpPorts") || "1433";
+  const purpose = getFormValue(form, "discoveryPurpose") || "Development";
+  const minimumConfidence = getFormValue(form, "discoveryMinimumConfidence") || "Medium";
+  const timeoutSeconds = getNumberFormValue(form, "discoveryTimeoutSeconds") || 120;
+
+  if (mode === "targets") {
+    const targets = requireDiscoveryValue(form, "discoveryTargets", "Enter at least one target server or host.");
+    return {
+      targets,
+      discoveryTypes: "",
+      scanTypes,
+      ipAddresses: "",
+      tcpPorts,
+      domainController: "",
+      minimumConfidence,
+      purpose,
+      timeoutSeconds
+    };
+  }
+
+  if (mode === "ipRange") {
+    const ipAddresses = requireDiscoveryValue(form, "discoveryIpAddresses", "Enter an IP range, for example 10.1.164.0/24.");
+    return {
+      targets: "",
+      discoveryTypes: "IPRange",
+      scanTypes,
+      ipAddresses,
+      tcpPorts,
+      domainController: "",
+      minimumConfidence,
+      purpose,
+      timeoutSeconds
+    };
+  }
+
+  if (mode === "spn" || mode === "domainServer" || mode === "domain") {
+    const domainController = requireDiscoveryValue(form, "discoveryDomainController", "Enter the domain controller to query.");
+    return {
+      targets: "",
+      discoveryTypes: getFormValue(form, "discoveryMethod") || "DomainSPN",
+      scanTypes,
+      ipAddresses: "",
+      tcpPorts,
+      domainController,
+      minimumConfidence,
+      purpose,
+      timeoutSeconds
+    };
+  }
+
   return {
-    targets: getFormValue(form, "discoveryTargets"),
-    discoveryTypes: getFormValue(form, "discoveryTypes") || "DomainSPN,DataSourceEnumeration",
-    scanTypes: getFormValue(form, "discoveryScanTypes") || "Browser,TCPPort",
-    ipAddresses: getFormValue(form, "discoveryIpAddresses"),
-    tcpPorts: getFormValue(form, "discoveryTcpPorts") || "1433",
-    domainController: getFormValue(form, "discoveryDomainController"),
-    minimumConfidence: getFormValue(form, "discoveryMinimumConfidence") || "Medium",
-    purpose: getFormValue(form, "discoveryPurpose") || "Development",
-    timeoutSeconds: getNumberFormValue(form, "discoveryTimeoutSeconds") || 120
+    targets: "",
+    discoveryTypes: "DataSourceEnumeration",
+    scanTypes,
+    ipAddresses: "",
+    tcpPorts,
+    domainController: "",
+    minimumConfidence,
+    purpose,
+    timeoutSeconds
   };
+}
+
+function requireDiscoveryValue(form, name, message) {
+  const value = getFormValue(form, name);
+  if (value) {
+    return value;
+  }
+
+  form.elements[name]?.focus();
+  throw new Error(message);
 }
 
 function collectCollectorCard(card) {

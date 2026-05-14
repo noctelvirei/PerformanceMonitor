@@ -70,10 +70,12 @@ Discovery only proves that an instance can be found. After a discovered instance
 
 Discovery input rules:
 
-- `Targets`: known computer names or SQL hosts. When this is filled in, discovery scans those targets directly.
-- `IP Ranges`: use dbatools-supported IP range syntax such as `10.1.164.0/24` or `10.1.164.1-10.1.164.254`. A bare `10.1.164.0` means that one address only.
-- `Discovery Type`: leave as `DomainSPN,DataSourceEnumeration` for domain/browser discovery. If `IP Ranges` is filled in with the default discovery type, the service scopes the scan to `IPRange` instead of starting a broad domain phase first.
-- `Domain Controller`: required when using unscoped `DomainSPN`, `Domain`, or `DomainServer` discovery without `Targets` or `IP Ranges`. This prevents the page from sitting on a broad AD/browser phase when the missing scope should be fixed in Settings.
+- `Discovery Mode`: choose one source first: known servers, registered SQL SPNs, AD Windows servers, AD computers, IP range, or SQL Browser broadcast. The page changes the available scan options to match that source.
+- `Known servers`: scans the named computer names or SQL hosts directly.
+- `Registered SQL SPNs`: uses Active Directory service principal names to find registered SQL instances. This is usually a sharper shortcut than sweeping an entire IP range.
+- `IP range`: uses dbatools-supported IP range syntax such as `10.1.164.0/24` or `10.1.164.1-10.1.164.254`. A bare `10.1.164.0` means that one address only.
+- `AD Windows servers` and `AD computers`: require a domain controller, then scan the discovered host list for SQL.
+- `SQL Browser broadcast`: uses DataSourceEnumeration without requiring targets, IP ranges, or a domain controller.
 
 For a dozen or more dev boxes, a single central SQL repository is usually the cleanest shape. For larger estates, run one collector per estate boundary, such as Development, Staging, and Production, and have those collectors post to the parent dashboard API. The monitored SQL Servers still only need normal remote query permissions; they do not need local Performance Monitor databases or Agent jobs.
 
