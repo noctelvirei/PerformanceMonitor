@@ -410,7 +410,7 @@ SELECT
             WHERE cl.server_id = s.server_id
         ) AS latest
         WHERE latest.rn = 1
-        AND   latest.status IN ('ERROR', 'PERMISSIONS')
+        AND   latest.status IN ('ERROR', 'AUTH_FAILED', 'PERMISSIONS')
     ) AS active_alert_count,
     (
         SELECT COALESCE(NULLIF(latest.error_message, ''), latest.status)
@@ -425,12 +425,12 @@ SELECT
             WHERE cl.server_id = s.server_id
         ) AS latest
         WHERE latest.rn = 1
-        AND   latest.status IN ('ERROR', 'PERMISSIONS')
-        ORDER BY CASE WHEN latest.status = 'ERROR' THEN 1 ELSE 2 END, latest.collection_time DESC
+        AND   latest.status IN ('ERROR', 'AUTH_FAILED', 'PERMISSIONS')
+        ORDER BY CASE WHEN latest.status IN ('ERROR', 'AUTH_FAILED') THEN 1 ELSE 2 END, latest.collection_time DESC
         LIMIT 1
     ) AS recent_alert,
     (
-        SELECT CASE WHEN latest.status = 'ERROR' THEN 'red' ELSE 'yellow' END
+        SELECT CASE WHEN latest.status IN ('ERROR', 'AUTH_FAILED') THEN 'red' ELSE 'yellow' END
         FROM
         (
             SELECT
@@ -441,8 +441,8 @@ SELECT
             WHERE cl.server_id = s.server_id
         ) AS latest
         WHERE latest.rn = 1
-        AND   latest.status IN ('ERROR', 'PERMISSIONS')
-        ORDER BY CASE WHEN latest.status = 'ERROR' THEN 1 ELSE 2 END, latest.collection_time DESC
+        AND   latest.status IN ('ERROR', 'AUTH_FAILED', 'PERMISSIONS')
+        ORDER BY CASE WHEN latest.status IN ('ERROR', 'AUTH_FAILED') THEN 1 ELSE 2 END, latest.collection_time DESC
         LIMIT 1
     ) AS active_alert_severity,
     (
@@ -593,17 +593,17 @@ SELECT
     lc.server_id,
     COALESCE(NULLIF(s.display_name, ''), lc.server_name) AS server_name,
     lc.collector_name,
-    CASE WHEN lc.status = 'ERROR' THEN 'red' ELSE 'yellow' END AS severity,
+    CASE WHEN lc.status IN ('ERROR', 'AUTH_FAILED') THEN 'red' ELSE 'yellow' END AS severity,
     COALESCE(NULLIF(lc.error_message, ''), lc.status) AS message,
     CASE WHEN lc.status = 'PERMISSIONS' THEN 'stats' ELSE 'logs' END AS target_tab
 FROM latest_collector AS lc
 LEFT JOIN servers AS s
     ON s.server_id = lc.server_id
 WHERE lc.rn = 1
-AND   lc.status IN ('ERROR', 'PERMISSIONS')
+AND   lc.status IN ('ERROR', 'AUTH_FAILED', 'PERMISSIONS')
 AND   COALESCE(s.is_enabled, TRUE) = TRUE
 ORDER BY
-    CASE WHEN lc.status = 'ERROR' THEN 1 ELSE 2 END,
+    CASE WHEN lc.status IN ('ERROR', 'AUTH_FAILED') THEN 1 ELSE 2 END,
     lc.collection_time DESC";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

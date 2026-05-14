@@ -78,6 +78,18 @@ export function createCentralRepositoryApi() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request)
       });
+    },
+
+    startDiscoveryJob(request) {
+      return fetchJson("/api/settings/discovery-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request)
+      });
+    },
+
+    loadDiscoveryJob(jobId) {
+      return fetchJson(`/api/settings/discovery-jobs/${encodeURIComponent(jobId)}`);
     }
   };
 }

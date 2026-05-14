@@ -23,7 +23,7 @@ public static class EstateHealthProjection
             return new ServerHealthProjection("disabled", "Monitoring disabled", false);
         }
 
-        if (string.Equals(lastStatus, "ERROR", StringComparison.OrdinalIgnoreCase))
+        if (CollectorCatalog.IsServerStatusError(lastStatus))
         {
             return new ServerHealthProjection("red", lastError ?? "Connection failed", true);
         }
@@ -61,12 +61,12 @@ public static class EstateHealthProjection
         foreach (var server in servers)
         {
             var hasCollectorAlert = collectorAlertServers.Contains(server.ServerId);
-            var hasConnectionError = string.Equals(server.LastStatus, "ERROR", StringComparison.OrdinalIgnoreCase);
-            if (!server.IsEnabled || !server.IsAttentionState || (hasCollectorAlert && !hasConnectionError))
+            if (!server.IsEnabled || !server.IsAttentionState || hasCollectorAlert)
             {
                 continue;
             }
 
+            var hasConnectionError = CollectorCatalog.IsServerStatusError(server.LastStatus);
             alerts.Add(new ActiveAlertDto(
                 server.LastSeenTime ?? now,
                 server.ServerId,
@@ -74,7 +74,7 @@ public static class EstateHealthProjection
                 "Server",
                 server.HealthState,
                 server.HealthReason,
-                "stats"));
+                hasConnectionError ? "logs" : "stats"));
         }
 
         return alerts

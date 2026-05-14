@@ -71,7 +71,7 @@ internal static class EstateTelemetryQueryProjection
             servers.Count(s => string.Equals(s.HealthState, "green", StringComparison.OrdinalIgnoreCase)),
             servers.Count(s => string.Equals(s.HealthState, "yellow", StringComparison.OrdinalIgnoreCase)),
             servers.Count(s => string.Equals(s.HealthState, "red", StringComparison.OrdinalIgnoreCase)),
-            servers.Count(s => s.IsEnabled && string.Equals(s.LastStatus, "ERROR", StringComparison.OrdinalIgnoreCase)),
+            servers.Count(s => s.IsEnabled && CollectorCatalog.IsServerStatusError(s.LastStatus)),
             servers.Count(s => !s.IsEnabled),
             generatedAt,
             servers,

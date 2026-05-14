@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 using PerformanceMonitor.CentralRepository.Models;
@@ -102,25 +103,33 @@ public sealed class SqlEstateCollectorService : BackgroundService
         var connectionString = server.ResolveConnectionString();
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            await _intake.AcceptAsync(new CollectionSnapshot
-            {
-                Server = CollectionServerIdentity.FromOptions(server),
-                ServerStatus = "ERROR",
-                ServerError = "No connection string configured"
-            }, cancellationToken);
+            await RecordServerConnectionAsync(
+                server,
+                CollectorCatalog.StatusError,
+                CollectorCatalog.StatusError,
+                "No connection string configured",
+                DateTime.UtcNow,
+                0,
+                cancellationToken);
             return;
         }
 
+        var connectionStartTime = DateTime.UtcNow;
+        var connectionWatch = Stopwatch.StartNew();
         try
         {
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
+            connectionWatch.Stop();
 
-            await _intake.AcceptAsync(new CollectionSnapshot
-            {
-                Server = CollectionServerIdentity.FromOptions(server),
-                ServerStatus = "ONLINE"
-            }, cancellationToken);
+            await RecordServerConnectionAsync(
+                server,
+                CollectorCatalog.StatusOnline,
+                CollectorCatalog.StatusSuccess,
+                null,
+                connectionStartTime,
+                ToDurationMilliseconds(connectionWatch.ElapsedMilliseconds),
+                cancellationToken);
 
             var commandTimeoutSeconds = _options.CurrentValue.CommandTimeoutSeconds;
             foreach (var collector in _scheduler.GetDueCollectors(
@@ -136,17 +145,77 @@ public sealed class SqlEstateCollectorService : BackgroundService
                 _scheduler.MarkRun(server.Id, collector.Name);
             }
         }
+        catch (SqlException ex) when (CollectorCatalog.IsAuthenticationError(ex))
+        {
+            connectionWatch.Stop();
+            var message = BuildAuthenticationFailureMessage(ex);
+            _logger.LogWarning(ex, "Authentication failed for server {Server}", server.ServerNameForStorage);
+            await RecordServerConnectionAsync(
+                server,
+                CollectorCatalog.StatusAuthenticationFailed,
+                CollectorCatalog.StatusAuthenticationFailed,
+                message,
+                connectionStartTime,
+                ToDurationMilliseconds(connectionWatch.ElapsedMilliseconds),
+                cancellationToken);
+        }
         catch (Exception ex) when (ex is SqlException or InvalidOperationException)
         {
+            connectionWatch.Stop();
             _logger.LogWarning(ex, "Connection failed for server {Server}", server.ServerNameForStorage);
-            await _intake.AcceptAsync(new CollectionSnapshot
-            {
-                Server = CollectionServerIdentity.FromOptions(server),
-                ServerStatus = "ERROR",
-                ServerError = ex.Message
-            }, cancellationToken);
+            await RecordServerConnectionAsync(
+                server,
+                CollectorCatalog.StatusError,
+                CollectorCatalog.StatusError,
+                ex.Message,
+                connectionStartTime,
+                ToDurationMilliseconds(connectionWatch.ElapsedMilliseconds),
+                cancellationToken);
         }
     }
+
+    private Task<IngestResultDto> RecordServerConnectionAsync(
+        MonitoredServerOptions server,
+        string serverStatus,
+        string connectionStatus,
+        string? message,
+        DateTime collectionTime,
+        int durationMs,
+        CancellationToken cancellationToken)
+        => _intake.AcceptAsync(new CollectionSnapshot
+        {
+            Server = CollectionServerIdentity.FromOptions(server),
+            CollectionTime = collectionTime,
+            ServerStatus = serverStatus,
+            ServerError = message,
+            Logs =
+            [
+                new CollectionLogEntry(
+                    CollectorCatalog.ServerConnection,
+                    collectionTime,
+                    durationMs,
+                    connectionStatus,
+                    message,
+                    0,
+                    durationMs,
+                    0)
+            ]
+        }, cancellationToken);
+
+    private static string BuildAuthenticationFailureMessage(SqlException exception)
+    {
+        var errorNumber = exception.Errors.Cast<SqlError>()
+            .Select(error => error.Number)
+            .FirstOrDefault(number => number != 0);
+        var prefix = errorNumber == 0
+            ? "Cannot log in with the configured SQL credentials"
+            : $"Cannot log in with the configured SQL credentials (SQL {errorNumber})";
+
+        return $"{prefix}: {exception.Message}";
+    }
+
+    private static int ToDurationMilliseconds(long elapsedMilliseconds)
+        => checked((int)Math.Min(int.MaxValue, elapsedMilliseconds));
 
     private async Task ArchiveIfDueAsync(CancellationToken cancellationToken)
     {

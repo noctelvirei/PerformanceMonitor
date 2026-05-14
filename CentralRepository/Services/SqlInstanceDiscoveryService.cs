@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -11,20 +12,48 @@ public sealed class SqlInstanceDiscoveryService
     private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IOptionsMonitor<MonitorOptions> _options;
     private readonly ILogger<SqlInstanceDiscoveryService> _logger;
+    private readonly IHostApplicationLifetime _appLifetime;
+    private readonly ConcurrentDictionary<string, DiscoveryJobState> _jobs = new(StringComparer.OrdinalIgnoreCase);
 
     public SqlInstanceDiscoveryService(
         IOptionsMonitor<MonitorOptions> options,
-        ILogger<SqlInstanceDiscoveryService> logger)
+        ILogger<SqlInstanceDiscoveryService> logger,
+        IHostApplicationLifetime appLifetime)
     {
         _options = options;
         _logger = logger;
+        _appLifetime = appLifetime;
     }
+
+    public SqlInstanceDiscoveryJobStatus StartDiscovery(SqlInstanceDiscoveryRequest request)
+    {
+        TrimCompletedJobs();
+
+        var job = new DiscoveryJobState(Guid.NewGuid().ToString("n"), DateTime.UtcNow);
+        _jobs[job.JobId] = job;
+        job.Report("Queued SQL Server discovery scan.");
+
+        _ = Task.Run(() => RunDiscoveryJobAsync(job, request), CancellationToken.None);
+        return job.ToStatus();
+    }
+
+    public SqlInstanceDiscoveryJobStatus? GetDiscoveryJob(string jobId)
+        => _jobs.TryGetValue(jobId, out var job) ? job.ToStatus() : null;
 
     public async Task<SqlInstanceDiscoveryResponse> DiscoverAsync(
         SqlInstanceDiscoveryRequest request,
         CancellationToken cancellationToken)
+        => await DiscoverAsync(request, null, cancellationToken);
+
+    private async Task<SqlInstanceDiscoveryResponse> DiscoverAsync(
+        SqlInstanceDiscoveryRequest request,
+        Action<string>? progress,
+        CancellationToken cancellationToken)
     {
+        void Report(string message) => progress?.Invoke(message);
+
         var timeoutSeconds = Math.Clamp(request.TimeoutSeconds, 10, 900);
+        Report($"Preparing discovery scan with a {timeoutSeconds} second timeout.");
 
         try
         {
@@ -49,18 +78,24 @@ public sealed class SqlInstanceDiscoveryService
                 discoveryTypes = [.. discoveryTypes, "IPRange"];
             }
 
+            var tcpPorts = ParseTcpPorts(request.TcpPorts);
+            var plan = DescribePlan(targets, discoveryTypes, scanTypes, ipAddresses, tcpPorts, request.DomainController);
+            Report($"Scan plan: {plan}");
+
             var jsonRequest = JsonSerializer.Serialize(new DbatoolsDiscoveryInput(
                 targets,
                 discoveryTypes,
                 scanTypes,
                 ipAddresses,
-                ParseTcpPorts(request.TcpPorts),
+                tcpPorts,
                 request.DomainController?.Trim() ?? "",
                 string.IsNullOrWhiteSpace(request.MinimumConfidence) ? "Medium" : request.MinimumConfidence.Trim(),
                 string.IsNullOrWhiteSpace(request.Purpose) ? "Development" : request.Purpose.Trim()),
                 s_jsonOptions);
-            var output = await RunDbatoolsDiscoveryAsync(jsonRequest, timeoutSeconds, cancellationToken);
+            var output = await RunDbatoolsDiscoveryAsync(jsonRequest, timeoutSeconds, plan, Report, cancellationToken);
+            Report("Parsing dbatools discovery output.");
             var rows = ParseDbatoolsOutput(output, request.Purpose);
+            Report(rows.Count == 0 ? "dbatools completed; no SQL Server instances matched." : $"dbatools completed; found {rows.Count} SQL Server instance(s).");
             return new SqlInstanceDiscoveryResponse(
                 true,
                 rows.Count == 0 ? "No SQL Server instances found." : $"Found {rows.Count} SQL Server instance(s).",
@@ -84,15 +119,44 @@ public sealed class SqlInstanceDiscoveryService
         }
     }
 
+    private async Task RunDiscoveryJobAsync(DiscoveryJobState job, SqlInstanceDiscoveryRequest request)
+    {
+        try
+        {
+            job.MarkRunning("Starting SQL Server discovery scan.");
+            var result = await DiscoverAsync(request, job.Report, _appLifetime.ApplicationStopping);
+            if (result.Success)
+            {
+                job.MarkSucceeded(result.Message, result.Instances);
+                return;
+            }
+
+            job.MarkFailed(result.Message);
+        }
+        catch (OperationCanceledException) when (_appLifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            job.MarkFailed("Discovery stopped because the central repository service is shutting down.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Discovery job {JobId} failed.", job.JobId);
+            job.MarkFailed(ex.Message);
+        }
+    }
+
     private async Task<string> RunDbatoolsDiscoveryAsync(
         string jsonRequest,
         int timeoutSeconds,
+        string plan,
+        Action<string> progress,
         CancellationToken cancellationToken)
     {
         var tempDirectory = GetDiscoveryTempDirectory();
         Directory.CreateDirectory(tempDirectory);
+        progress($"Using discovery temp folder {tempDirectory}.");
 
         var shell = ResolvePowerShellExecutable(tempDirectory);
+        progress($"Using {shell} to run dbatools Find-DbaInstance.");
         var script = """
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -159,8 +223,10 @@ Find-DbaInstance @params |
         startInfo.Environment["TEMP"] = tempDirectory;
         startInfo.Environment["TMP"] = tempDirectory;
 
+        progress($"Starting Find-DbaInstance. Waiting on: {plan}");
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not start PowerShell for SQL Server discovery.");
+        var processStartTime = DateTime.UtcNow;
         using var registration = cancellationToken.Register(() =>
         {
             try
@@ -178,12 +244,29 @@ Find-DbaInstance @params |
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
         var waitTask = process.WaitForExitAsync(cancellationToken);
-        var delayTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds), cancellationToken);
-        var finished = await Task.WhenAny(waitTask, delayTask);
-        if (!ReferenceEquals(finished, waitTask) && !process.HasExited)
+
+        while (!waitTask.IsCompleted)
         {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException($"Discovery timed out after {timeoutSeconds} seconds.");
+            var elapsed = DateTime.UtcNow - processStartTime;
+            if (elapsed >= TimeSpan.FromSeconds(timeoutSeconds))
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+
+                throw new TimeoutException($"Discovery timed out after {timeoutSeconds} seconds while waiting for dbatools Find-DbaInstance. Last wait: {plan}");
+            }
+
+            var pollDelay = TimeSpan.FromSeconds(Math.Min(5, Math.Max(1, timeoutSeconds - elapsed.TotalSeconds)));
+            var finished = await Task.WhenAny(waitTask, Task.Delay(pollDelay, cancellationToken));
+            if (ReferenceEquals(finished, waitTask))
+            {
+                break;
+            }
+
+            elapsed = DateTime.UtcNow - processStartTime;
+            progress($"Still waiting for Find-DbaInstance after {elapsed.TotalSeconds:n0}s of {timeoutSeconds}s. Waiting on: {plan}");
         }
 
         await waitTask;
@@ -196,6 +279,7 @@ Find-DbaInstance @params |
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "dbatools discovery failed." : error.Trim());
         }
 
+        progress("Find-DbaInstance finished; collecting returned candidates.");
         return output;
     }
 
@@ -325,6 +409,46 @@ Find-DbaInstance @params |
         return ports.Distinct().ToArray();
     }
 
+    private static string DescribePlan(
+        string[] targets,
+        string[] discoveryTypes,
+        string[] scanTypes,
+        string[] ipAddresses,
+        int[] tcpPorts,
+        string? domainController)
+    {
+        var parts = new List<string>
+        {
+            $"targets={FormatList(targets, "none")}",
+            $"discovery={FormatList(discoveryTypes, "default")}",
+            $"scan={FormatList(scanTypes, "default")}",
+            $"ip={FormatList(ipAddresses, "none")}",
+            $"ports={FormatList(tcpPorts.Select(static port => port.ToString()).ToArray(), "default")}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(domainController))
+        {
+            parts.Add($"domain controller={domainController.Trim()}");
+        }
+
+        return string.Join("; ", parts);
+    }
+
+    private static string FormatList(string[] values, string emptyValue)
+        => values.Length == 0 ? emptyValue : string.Join(",", values);
+
+    private void TrimCompletedJobs()
+    {
+        var cutoff = DateTime.UtcNow.AddHours(-2);
+        foreach (var item in _jobs)
+        {
+            if (item.Value.CompletedAt is { } completedAt && completedAt < cutoff)
+            {
+                _jobs.TryRemove(item.Key, out _);
+            }
+        }
+    }
+
     private static string BuildServerId(string dataSource)
     {
         var builder = new StringBuilder(dataSource.Length);
@@ -366,4 +490,94 @@ Find-DbaInstance @params |
         string DomainController,
         string MinimumConfidence,
         string Purpose);
+
+    private sealed class DiscoveryJobState
+    {
+        private readonly object _gate = new();
+        private readonly List<string> _events = [];
+        private IReadOnlyList<SqlInstanceDiscoveryResult> _instances = [];
+
+        public DiscoveryJobState(string jobId, DateTime startedAt)
+        {
+            JobId = jobId;
+            StartedAt = startedAt;
+        }
+
+        public string JobId { get; }
+        public DateTime StartedAt { get; }
+        public DateTime? CompletedAt { get; private set; }
+        private string Status { get; set; } = "queued";
+        private string Message { get; set; } = "Queued SQL Server discovery scan.";
+
+        public void MarkRunning(string message)
+        {
+            lock (_gate)
+            {
+                Status = "running";
+            }
+
+            Report(message);
+        }
+
+        public void MarkSucceeded(string message, IReadOnlyList<SqlInstanceDiscoveryResult> instances)
+        {
+            lock (_gate)
+            {
+                Status = "succeeded";
+                Message = message;
+                CompletedAt = DateTime.UtcNow;
+                _instances = instances;
+                AddEventLocked(message);
+            }
+        }
+
+        public void MarkFailed(string message)
+        {
+            lock (_gate)
+            {
+                Status = "failed";
+                Message = message;
+                CompletedAt = DateTime.UtcNow;
+                AddEventLocked(message);
+            }
+        }
+
+        public void Report(string message)
+        {
+            lock (_gate)
+            {
+                Message = message;
+                AddEventLocked(message);
+            }
+        }
+
+        public SqlInstanceDiscoveryJobStatus ToStatus()
+        {
+            lock (_gate)
+            {
+                return new SqlInstanceDiscoveryJobStatus(
+                    JobId,
+                    Status,
+                    Message,
+                    StartedAt,
+                    CompletedAt,
+                    _events.ToList(),
+                    _instances);
+            }
+        }
+
+        private void AddEventLocked(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            _events.Add($"{DateTime.Now:HH:mm:ss} {message}");
+            if (_events.Count > 50)
+            {
+                _events.RemoveRange(0, _events.Count - 50);
+            }
+        }
+    }
 }

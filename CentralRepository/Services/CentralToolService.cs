@@ -90,8 +90,9 @@ public sealed class CentralToolService
                     latest_rows = latest.RowsCollected,
                     latest_duration_ms = latest.DurationMs,
                     runs = group.Count(),
-                    errors = group.Count(log => string.Equals(log.Status, "ERROR", StringComparison.OrdinalIgnoreCase)),
-                    permissions = group.Count(log => string.Equals(log.Status, "PERMISSIONS", StringComparison.OrdinalIgnoreCase))
+                    errors = group.Count(log => string.Equals(log.Status, CollectorCatalog.StatusError, StringComparison.OrdinalIgnoreCase)),
+                    authentication_failures = group.Count(log => string.Equals(log.Status, CollectorCatalog.StatusAuthenticationFailed, StringComparison.OrdinalIgnoreCase)),
+                    permissions = group.Count(log => string.Equals(log.Status, CollectorCatalog.StatusPermissions, StringComparison.OrdinalIgnoreCase))
                 };
             })
             .OrderBy(row => row.collector)

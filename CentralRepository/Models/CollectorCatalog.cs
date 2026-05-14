@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using PerformanceMonitor.Collectors;
 
 namespace PerformanceMonitor.CentralRepository.Models;
@@ -29,6 +30,11 @@ public static class CollectorCatalog
     public const string Deadlocks = SqlCollectorNames.Deadlocks;
     public const string BlockedProcessReport = SqlCollectorNames.BlockedProcessReport;
     public const string ServerConnection = "server_connection";
+    public const string StatusOnline = "ONLINE";
+    public const string StatusSuccess = "SUCCESS";
+    public const string StatusError = "ERROR";
+    public const string StatusPermissions = "PERMISSIONS";
+    public const string StatusAuthenticationFailed = "AUTH_FAILED";
 
     public static IReadOnlyList<CollectorScheduleOptions> DefaultSchedules =>
         SqlCollectorCatalog.DefaultSchedules
@@ -39,9 +45,9 @@ public static class CollectorCatalog
             })
             .ToList();
 
-    public static bool IsPermissionError(Microsoft.Data.SqlClient.SqlException exception)
+    public static bool IsPermissionError(SqlException exception)
     {
-        foreach (Microsoft.Data.SqlClient.SqlError error in exception.Errors)
+        foreach (SqlError error in exception.Errors)
         {
             if (error.Number is 229 or 297 or 300)
             {
@@ -51,4 +57,21 @@ public static class CollectorCatalog
 
         return false;
     }
+
+    public static bool IsAuthenticationError(SqlException exception)
+    {
+        foreach (SqlError error in exception.Errors)
+        {
+            if (error.Number is 18452 or 18456 or 18470 or 18487 or 18488 or 4060)
+            {
+                return true;
+            }
+        }
+
+        return exception.Message.Contains("Login failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsServerStatusError(string? status)
+        => string.Equals(status, StatusError, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, StatusAuthenticationFailed, StringComparison.OrdinalIgnoreCase);
 }

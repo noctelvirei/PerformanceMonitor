@@ -80,8 +80,8 @@ function renderServerLog(container, rows) {
     row.title = log.errorMessage || "";
     row.innerHTML = `
       <span>${formatTime(log.collectionTime)}</span>
-      <span>${escapeHtml(log.collectorName)}</span>
-      <span class="status ${statusClass}">${escapeHtml(log.status)}</span>
+      <span>${escapeHtml(formatCollectorName(log.collectorName))}</span>
+      <span class="status ${statusClass}">${escapeHtml(formatLogStatus(log.status))}</span>
       <span>${log.rowsCollected ?? 0}</span>
     `;
     container.appendChild(row);
@@ -279,6 +279,21 @@ function formatCollectorName(name) {
   return String(name || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function formatLogStatus(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "auth_failed":
+      return "Login failed";
+    case "permissions":
+      return "Permissions";
+    case "success":
+      return "OK";
+    case "error":
+      return "Error";
+    default:
+      return formatCollectorName(status);
+  }
 }
 
 function drawCpuChart(canvas, samples) {

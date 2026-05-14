@@ -187,22 +187,45 @@ async function testRepository() {
 }
 
 async function discoverServers() {
-  els.discoveryStatus.textContent = "Scanning...";
+  els.discoveryStatus.textContent = "Starting scan...";
   els.discoveryStatus.className = "settings-card-status";
   els.discoveryResults.innerHTML = "";
   els.discoverServers.disabled = true;
 
   try {
-    const result = await api.discoverServers(collectDiscoverySettings(els.settingsForm));
-    els.discoveryStatus.textContent = result.message;
+    let job = await api.startDiscoveryJob(collectDiscoverySettings(els.settingsForm));
+    settingsView.renderDiscoveryProgress(job);
+    els.discoveryStatus.textContent = job.message || "Discovery scan running...";
+
+    while (!isDiscoveryJobDone(job)) {
+      await delay(1500);
+      job = await api.loadDiscoveryJob(job.jobId);
+      settingsView.renderDiscoveryProgress(job);
+      els.discoveryStatus.textContent = job.message || "Discovery scan running...";
+    }
+
+    if (String(job.status || "").toLowerCase() !== "succeeded") {
+      throw new Error(job.message || "Discovery failed.");
+    }
+
+    els.discoveryStatus.textContent = job.message;
     els.discoveryStatus.className = "settings-card-status green";
-    settingsView.renderDiscoveryResults(result.instances || []);
+    settingsView.renderDiscoveryResults(job.instances || []);
   } catch (error) {
     els.discoveryStatus.textContent = error.message;
     els.discoveryStatus.className = "settings-card-status red";
   } finally {
     els.discoverServers.disabled = false;
   }
+}
+
+function isDiscoveryJobDone(job) {
+  const status = String(job?.status || "").toLowerCase();
+  return status === "succeeded" || status === "failed";
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 function addDiscoveredServer(instance) {

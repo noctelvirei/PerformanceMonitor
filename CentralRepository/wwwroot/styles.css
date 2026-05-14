@@ -907,6 +907,7 @@ canvas {
 }
 
 .log-row .status.error,
+.log-row .status.auth_failed,
 .log-row .status.permissions {
   color: var(--warning);
 }
@@ -1202,6 +1203,37 @@ canvas {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.discovery-progress {
+  display: grid;
+  gap: 10px;
+}
+
+.discovery-progress.succeeded {
+  border-color: rgba(45, 214, 129, .55);
+}
+
+.discovery-progress.failed {
+  border-color: rgba(255, 95, 114, .55);
+}
+
+.discovery-progress div {
+  display: grid;
+  gap: 4px;
+}
+
+.discovery-progress span,
+.discovery-progress li {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.discovery-progress ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
 }
 
 .settings-card-header {

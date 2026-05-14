@@ -93,6 +93,24 @@ app.MapPost("/api/settings/discover-servers", async (
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 });
 
+app.MapPost("/api/settings/discovery-jobs", (
+    SqlInstanceDiscoveryRequest request,
+    SqlInstanceDiscoveryService discovery) =>
+{
+    var job = discovery.StartDiscovery(request);
+    return Results.Accepted($"/api/settings/discovery-jobs/{job.JobId}", job);
+});
+
+app.MapGet("/api/settings/discovery-jobs/{jobId}", (
+    string jobId,
+    SqlInstanceDiscoveryService discovery) =>
+{
+    var job = discovery.GetDiscoveryJob(jobId);
+    return job is null
+        ? Results.NotFound(new { message = "Discovery job not found." })
+        : Results.Ok(job);
+});
+
 app.MapGet("/api/collection-log", async (IEstateTelemetryReader reader, int? limit, CancellationToken cancellationToken)
     => Results.Ok(await reader.GetCollectionLogAsync(limit ?? 200, cancellationToken)));
 

@@ -113,6 +113,15 @@ public sealed record SqlInstanceDiscoveryResponse(
     string Message,
     IReadOnlyList<SqlInstanceDiscoveryResult> Instances);
 
+public sealed record SqlInstanceDiscoveryJobStatus(
+    string JobId,
+    string Status,
+    string Message,
+    DateTime StartedAt,
+    DateTime? CompletedAt,
+    IReadOnlyList<string> Events,
+    IReadOnlyList<SqlInstanceDiscoveryResult> Instances);
+
 public sealed record SqlInstanceDiscoveryResult(
     string DataSource,
     string DisplayName,

@@ -64,7 +64,9 @@ Settings are saved to the monitoring server's local `CentralRepository\appsettin
 
 Alert thresholds are also configured in Settings. The central defaults are intentionally close to Lite's operator defaults: SQL CPU warning/critical, long-running query warning/critical, memory grant wait, file latency, long-running job, blocking, and deadlock rules all feed the overview traffic lights.
 
-The Settings page can discover SQL Server instances through dbatools' `Find-DbaInstance` command. Install dbatools for the same Windows account that runs the central repository service, then use **Discovery** to scan named targets, Active Directory SQL SPNs, browser enumeration, or an IP range. Discovered instances are shown as candidates; choose **Add** to turn one into a normal monitored server entry.
+The Settings page can discover SQL Server instances through dbatools' `Find-DbaInstance` command. Install dbatools for the same Windows account that runs the central repository service, then use **Discovery** to scan named targets, Active Directory SQL SPNs, browser enumeration, or an IP range. Discovery runs as a tracked background job; the page shows the resolved scan plan, PowerShell/dbatools startup, elapsed wait messages, timeout, and final result instead of leaving the browser silent. Discovered instances are shown as candidates; choose **Add** to turn one into a normal monitored server entry.
+
+Discovery only proves that an instance can be found. After a discovered instance is added, the next collector cycle attempts to log in with the configured Windows or SQL credentials. If SQL Server rejects those credentials, the service records an `AUTH_FAILED` server-connection state, raises a red dashboard alert, and clears it automatically once a later connection succeeds.
 
 Discovery input rules:
 
@@ -229,7 +231,7 @@ The overview cards are intended to work like an estate traffic-light board:
 
 The browser page raises an in-page toast when a server enters red or yellow. If browser notifications are enabled with the button in the header, the same state change also raises a native browser notification.
 
-Alert-worthy means connection failures, collector statuses where the latest run for that server/collector is `ERROR` or `PERMISSIONS`, currently blocked sessions from the latest `waiting_tasks` snapshot, and red/yellow conditions projected from the latest central collector samples. Current sample-based rules include blocked process counters, pending memory grants, recent memory pressure, high file latency, long-running SQL Agent jobs, recent deadlock or blocked process events, non-online databases, and AUTO_CLOSE/AUTO_SHRINK database settings. A later successful collector run with a clean latest snapshot clears the relevant alert automatically, so the server panel colour returns to the next-worst current state instead of holding onto stale failures.
+Alert-worthy means connection failures, login failures (`AUTH_FAILED`), collector statuses where the latest run for that server/collector is `ERROR` or `PERMISSIONS`, currently blocked sessions from the latest `waiting_tasks` snapshot, and red/yellow conditions projected from the latest central collector samples. Current sample-based rules include blocked process counters, pending memory grants, recent memory pressure, high file latency, long-running SQL Agent jobs, recent deadlock or blocked process events, non-online databases, and AUTO_CLOSE/AUTO_SHRINK database settings. A later successful collector run with a clean latest snapshot clears the relevant alert automatically, so the server panel colour returns to the next-worst current state instead of holding onto stale failures.
 
 ## Full Parity Map
 

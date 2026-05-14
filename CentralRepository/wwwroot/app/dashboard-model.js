@@ -84,7 +84,7 @@ function buildAlerts(activeAlerts) {
       serverId: alert.serverId,
       serverName: alert.serverName,
       state: alert.severity || "red",
-      title: `${alert.serverName} / ${alert.source}`,
+      title: `${alert.serverName} / ${formatAlertSource(alert.source)}`,
       body: alert.message || "Needs attention",
       targetTab: alert.targetTab || "logs",
       time: alert.raisedAt
@@ -94,6 +94,15 @@ function buildAlerts(activeAlerts) {
     if (severityDelta !== 0) return severityDelta;
     return new Date(right.time || 0).getTime() - new Date(left.time || 0).getTime();
   }).slice(0, 30);
+}
+
+function formatAlertSource(source) {
+  const value = String(source || "").trim();
+  if (!value) return "Alert";
+  if (value.toLowerCase() === "server_connection") return "Connection";
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function purposeRank(purpose) {

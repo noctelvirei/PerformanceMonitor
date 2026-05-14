@@ -66,6 +66,10 @@ export function createSettingsView(els, callbacks) {
 
     renderDiscoveryResults(instances) {
       renderDiscoveryResults(els.discoveryResults, instances, callbacks.onAddDiscoveredServer);
+    },
+
+    renderDiscoveryProgress(job) {
+      renderDiscoveryJobProgress(els.discoveryResults, job);
     }
   };
 }
@@ -347,6 +351,33 @@ function renderDiscoveryResults(container, instances, onAddDiscoveredServer) {
     });
     container.appendChild(row);
   }
+}
+
+function renderDiscoveryJobProgress(container, job) {
+  const events = job?.events || [];
+  const status = String(job?.status || "running").toLowerCase();
+  const latest = job?.message || "Discovery scan running...";
+
+  container.innerHTML = `
+    <section class="settings-card compact discovery-progress ${escapeAttr(status)}">
+      <div>
+        <strong>${escapeHtml(latest)}</strong>
+        <span>${escapeHtml(formatDiscoveryJobMeta(job))}</span>
+      </div>
+      <ol>
+        ${events.map(event => `<li>${escapeHtml(event)}</li>`).join("")}
+      </ol>
+    </section>
+  `;
+}
+
+function formatDiscoveryJobMeta(job) {
+  if (!job?.startedAt) return "Waiting for discovery to start.";
+  const started = new Date(job.startedAt);
+  const end = job.completedAt ? new Date(job.completedAt) : new Date();
+  const seconds = Math.max(0, Math.round((end.getTime() - started.getTime()) / 1000));
+  const status = String(job.status || "running").replaceAll("_", " ");
+  return `${status} / ${seconds}s elapsed`;
 }
 
 export function collectServerCard(card) {
