@@ -91,6 +91,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $manualUrl = "https://github.com/$env:GITHUB_REPOSITORY/compare/$env:BASE_BRANCH...$env:SYNC_BRANCH?expand=1"
+          $summary = @(
+            "## Upstream sync branch is ready",
+            "",
+            "The sync branch was pushed successfully, but GitHub Actions could not open or update the pull request automatically.",
+            "Open it manually: $manualUrl"
+          )
+
           $body = @'
           This PR merges the latest `upstream/dev` from `erikdarlingdata/PerformanceMonitor` into this fork's `main`.
 
@@ -113,20 +121,42 @@ jobs:
             --json number `
             --jq '.[0].number'
 
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not list existing upstream sync pull requests. Continuing with the pushed sync branch."
+            $summary | ForEach-Object { $_ >> $env:GITHUB_STEP_SUMMARY }
+            exit 0
+          }
+
           if ($existing) {
             gh pr edit $existing `
               --repo $env:GITHUB_REPOSITORY `
               --title "Sync upstream dev into fork" `
               --body $body
-            "Updated existing PR #$existing." >> $env:GITHUB_STEP_SUMMARY
+
+            if ($LASTEXITCODE -eq 0) {
+              "Updated existing PR #$existing." >> $env:GITHUB_STEP_SUMMARY
+              exit 0
+            }
+
+            Write-Warning "Could not update existing PR #$existing. Continuing with the pushed sync branch."
           } else {
-            gh pr create `
+            $createdUrl = gh pr create `
               --repo $env:GITHUB_REPOSITORY `
               --base "$env:BASE_BRANCH" `
               --head "$env:SYNC_BRANCH" `
               --title "Sync upstream dev into fork" `
               --body $body
+
+            if ($LASTEXITCODE -eq 0) {
+              "Created pull request: $createdUrl" >> $env:GITHUB_STEP_SUMMARY
+              exit 0
+            }
+
+            Write-Warning "Could not create upstream sync pull request. Continuing with the pushed sync branch."
           }
+
+          $summary | ForEach-Object { $_ >> $env:GITHUB_STEP_SUMMARY }
+          exit 0
 
       - name: Setup .NET 8.0
         if: steps.check.outputs.has_changes == 'true'
